@@ -1,4 +1,5 @@
 .env
+railway-paste.env
 .webpanel_session_secret
 .webpanel_totp_secret
 *.session
