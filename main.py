@@ -95,11 +95,6 @@ async def main() -> None:
     await app.initialize()
     me = await app.bot.get_me()
     await registry.run_bot_membership_probe(app.bot, me.id)
-    await app.start()
-    await app.updater.start_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
 
     internal_runner = None
     internal_url = f"http://{settings.internal_api_host}:{settings.internal_api_port}"
@@ -160,6 +155,12 @@ async def main() -> None:
         log.warning(
             "Web panel başlatılmadı: WEB_PANEL_USER ve WEB_PANEL_PASSWORD (veya HASH) .env içinde olmalı."
         )
+
+    await app.start()
+    await app.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
     refresh_task = asyncio.create_task(
         periodic_sync(tele, registry, app.bot, settings.sync_interval_sec),

@@ -58,14 +58,18 @@ class TelethonService:
         return await self._client.is_user_authorized()
 
     async def connect_for_startup(self) -> None:
-        """Bağlanır; oturum yoksa etkileşimli start() çağırmaz — panelden tamamlanır."""
+        """Bağlanır; oturum yoksa etkileşimli client.start() çağrılmaz — Yönetim panelinden tamamlanır."""
         await self.ensure_connected()
         if await self._client.is_user_authorized():
             log.info("Telethon oturumu hazır")
         else:
             log.warning(
-                "Telethon kullanıcı oturumu yok — panel Yönetim sayfasından Telegram ile giriş yapın."
+                "Telethon kullanıcı oturumu yok — web paneli Yönetim → Telegram (Telethon) oturumu ile giriş yapın."
             )
+        log.info(
+            "Telethon başlangıç: etkileşimsiz mod (stdin istenmez). "
+            "Logda 'Please enter your phone' görürseniz deploy eski image kullanıyordur — yeniden deploy edin."
+        )
 
     def _clear_login_pending(self) -> None:
         self._pending_phone = None
