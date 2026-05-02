@@ -13,6 +13,16 @@ from invite_flow import create_invite_package
 
 log = logging.getLogger(__name__)
 
+_TELETHON_REQUIRED_MSG = (
+    "Telethon kullanıcı oturumu yok — panel Yönetim → Telegram oturumu bölümünden giriş yapın."
+)
+
+
+async def _telethon_required(tele: Any) -> web.Response | None:
+    if not await tele.is_user_authorized():
+        return web.json_response({"ok": False, "error": _TELETHON_REQUIRED_MSG}, status=503)
+    return None
+
 
 @web.middleware
 async def bearer_auth(request: web.Request, handler: Any) -> web.StreamResponse:
@@ -30,6 +40,15 @@ async def handle_health(_request: web.Request) -> web.Response:
 
 
 async def handle_joint(request: web.Request) -> web.Response:
+    tele = request.app["tele"]
+    if not await tele.is_user_authorized():
+        return web.json_response(
+            {
+                "groups": [],
+                "count": 0,
+                "warning": "Telethon oturumu yok — ortak grup listesi boş; Yönetim sayfasından Telegram ile giriş yapın.",
+            }
+        )
     registry = request.app["registry"]
     bot = request.app["bot"]
     me = await bot.get_me()
@@ -41,6 +60,9 @@ async def handle_joint(request: web.Request) -> web.Response:
 
 async def handle_refresh(request: web.Request) -> web.Response:
     tele = request.app["tele"]
+    deny = await _telethon_required(tele)
+    if deny is not None:
+        return deny
     registry = request.app["registry"]
     bot = request.app["bot"]
     await tele.refresh_dialogs_into_registry()
@@ -59,6 +81,9 @@ async def handle_invite(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "username gerekli"}, status=400)
     bot = request.app["bot"]
     tele = request.app["tele"]
+    deny = await _telethon_required(tele)
+    if deny is not None:
+        return deny
     registry = request.app["registry"]
     result = await create_invite_package(bot, tele, registry, username, operator_chat_id=0)
     status = 200 if result.get("ok") else 400
@@ -75,6 +100,9 @@ async def handle_kick_preview(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "username gerekli"}, status=400)
     bot = request.app["bot"]
     tele = request.app["tele"]
+    deny = await _telethon_required(tele)
+    if deny is not None:
+        return deny
     registry = request.app["registry"]
     result = await api_bulk_kick_preview(bot, tele, registry, username)
     status = 200 if result.get("ok") else 400
@@ -113,8 +141,62 @@ async def handle_kick(request: web.Request) -> web.Response:
 
     bot = request.app["bot"]
     tele = request.app["tele"]
+    deny = await _telethon_required(tele)
+    if deny is not None:
+        return deny
     registry = request.app["registry"]
     result = await api_bulk_kick_all_groups(bot, tele, registry, username, chat_ids=chat_ids)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+async def handle_telethon_status(request: web.Request) -> web.Response:
+    tele = request.app["tele"]
+    await tele.ensure_connected()
+    authorized = await tele.is_user_authorized()
+    return web.json_response(
+        {
+            "ok": True,
+            "authorized": authorized,
+            "login_code_pending": tele.login_code_pending,
+        }
+    )
+
+
+async def handle_telethon_send_code(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    phone = (data.get("phone") or "").strip()
+    tele = request.app["tele"]
+    result = await tele.login_send_code(phone)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+async def handle_telethon_sign_in(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    code = (data.get("code") or "").strip()
+    tele = request.app["tele"]
+    result = await tele.login_submit_code(code)
+    if result.get("ok") and result.get("need_password"):
+        return web.json_response(result, status=200)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+async def handle_telethon_password(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    password = (data.get("password") or "").strip()
+    tele = request.app["tele"]
+    result = await tele.login_submit_password(password)
     status = 200 if result.get("ok") else 400
     return web.json_response(result, status=status)
 
@@ -136,6 +218,10 @@ def create_internal_app(
     app.router.add_post("/api/invite", handle_invite)
     app.router.add_post("/api/kick/preview", handle_kick_preview)
     app.router.add_post("/api/kick", handle_kick)
+    app.router.add_get("/api/telethon/status", handle_telethon_status)
+    app.router.add_post("/api/telethon/send_code", handle_telethon_send_code)
+    app.router.add_post("/api/telethon/sign_in", handle_telethon_sign_in)
+    app.router.add_post("/api/telethon/password", handle_telethon_password)
     return app
 
 

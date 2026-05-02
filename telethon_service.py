@@ -5,12 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 
 from telethon import TelegramClient
-from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError, PhoneCodeInvalidError, SessionPasswordNeededError
 from telethon.tl.types import Channel, Chat, User
 
 from group_registry import GroupRegistry
@@ -28,15 +26,6 @@ def _title_from_entity(entity: Any) -> str:
     return ""
 
 
-def _cannot_interactive_telethon_login() -> bool:
-    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("CI"):
-        return True
-    try:
-        return not sys.stdin.isatty()
-    except Exception:
-        return True
-
-
 class TelethonService:
     def __init__(
         self,
@@ -44,36 +33,116 @@ class TelethonService:
         api_hash: str,
         session_name: str,
         registry: GroupRegistry,
-        *,
-        string_session: str | None = None,
     ) -> None:
-        sess: str | StringSession = StringSession(string_session) if string_session else session_name
-        self._client = TelegramClient(sess, api_id, api_hash)
+        self._client = TelegramClient(session_name, api_id, api_hash)
         self._registry = registry
         self._refresh_lock = asyncio.Lock()
+        self._login_lock = asyncio.Lock()
+        self._pending_phone: str | None = None
+        self._pending_phone_code_hash: str | None = None
 
     @property
     def client(self) -> TelegramClient:
         return self._client
 
-    async def connect_and_login(self) -> None:
-        await self._client.connect()
+    @property
+    def login_code_pending(self) -> bool:
+        return bool(self._pending_phone and self._pending_phone_code_hash)
+
+    async def ensure_connected(self) -> None:
+        if not self._client.is_connected():
+            await self._client.connect()
+
+    async def is_user_authorized(self) -> bool:
+        await self.ensure_connected()
+        return await self._client.is_user_authorized()
+
+    async def connect_for_startup(self) -> None:
+        """Bağlanır; oturum yoksa etkileşimli start() çağırmaz — panelden tamamlanır."""
+        await self.ensure_connected()
         if await self._client.is_user_authorized():
             log.info("Telethon oturumu hazır")
-            return
-        if _cannot_interactive_telethon_login():
-            raise SystemExit(
-                "Telethon kullanıcı oturumu yok veya geçersiz; sunucuda telefon doğrulaması yapılamaz.\n"
-                "Yerelde bir kez giriş yapıp oturumu dışa aktarın:\n"
-                "  python export_telethon_string_session.py\n"
-                "Çıkan TELETHON_STRING_SESSION değerini Railway Variables'a ekleyin.\n"
-                "Alternatif: user_session.session dosyasını konteynere volume olarak bağlayın."
+        else:
+            log.warning(
+                "Telethon kullanıcı oturumu yok — panel Yönetim sayfasından Telegram ile giriş yapın."
             )
-        await self._client.start()
-        log.info("Telethon oturumu hazır")
+
+    def _clear_login_pending(self) -> None:
+        self._pending_phone = None
+        self._pending_phone_code_hash = None
+
+    async def login_send_code(self, phone: str) -> dict[str, Any]:
+        """SMS doğrulama kodu talep eder (panel akışı)."""
+        phone = (phone or "").strip()
+        if not phone:
+            return {"ok": False, "error": "Telefon numarası gerekli"}
+        async with self._login_lock:
+            await self.ensure_connected()
+            if await self._client.is_user_authorized():
+                return {"ok": False, "error": "Zaten oturum açık"}
+            try:
+                sent = await self._client.send_code_request(phone)
+            except FloodWaitError as e:
+                sec = int(getattr(e, "seconds", 0) or 0)
+                return {"ok": False, "error": f"Çok fazla deneme; yaklaşık {sec} sn sonra tekrar deneyin"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            self._pending_phone = phone
+            self._pending_phone_code_hash = sent.phone_code_hash
+            return {"ok": True}
+
+    async def login_submit_code(self, code: str) -> dict[str, Any]:
+        async with self._login_lock:
+            code = (code or "").strip()
+            if not code:
+                return {"ok": False, "error": "Kod gerekli"}
+            if not self._pending_phone or not self._pending_phone_code_hash:
+                return {"ok": False, "error": "Önce telefon numarasına doğrulama kodu isteyin"}
+            await self.ensure_connected()
+            try:
+                await self._client.sign_in(
+                    self._pending_phone,
+                    code,
+                    phone_code_hash=self._pending_phone_code_hash,
+                )
+            except SessionPasswordNeededError:
+                return {"ok": True, "need_password": True}
+            except PhoneCodeInvalidError:
+                self._clear_login_pending()
+                return {"ok": False, "error": "Kod geçersiz veya süresi doldu; kodu yeniden isteyin"}
+            except Exception as e:
+                self._clear_login_pending()
+                return {"ok": False, "error": str(e)}
+            self._clear_login_pending()
+            try:
+                await self.refresh_dialogs_into_registry()
+            except Exception:
+                log.exception("Oturum sonrası dialog yenileme")
+            return {"ok": True, "need_password": False}
+
+    async def login_submit_password(self, password: str) -> dict[str, Any]:
+        async with self._login_lock:
+            password = (password or "").strip()
+            if not password:
+                return {"ok": False, "error": "İki aşamalı doğrulama şifresi gerekli"}
+            await self.ensure_connected()
+            try:
+                await self._client.sign_in(password=password)
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            self._clear_login_pending()
+            try:
+                await self.refresh_dialogs_into_registry()
+            except Exception:
+                log.exception("Oturum sonrası dialog yenileme")
+            return {"ok": True}
 
     async def refresh_dialogs_into_registry(self) -> None:
         """Telethon'un gördüğü grup/kanal sohbetlerini registry'ye yazar (dialog.id = Bot API chat_id ile uyumlu)."""
+        await self.ensure_connected()
+        if not await self._client.is_user_authorized():
+            log.debug("Telethon oturumu yok; dialog listesi yenilenmedi")
+            return
         async with self._refresh_lock:
             ids: set[int] = set()
             titles: dict[int, str] = {}

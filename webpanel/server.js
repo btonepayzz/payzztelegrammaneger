@@ -253,6 +253,55 @@ app.patch("/api/admin/users/:name", requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/admin/telethon/status", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/telethon/status");
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/admin/telethon/send_code", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/telethon/send_code", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/admin/telethon/sign_in", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/telethon/sign_in", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/admin/telethon/password", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/telethon/password", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.post("/api/logout", (req, res) => {
   req.session.destroy((err) => {
     if (err) console.warn("[panel] session destroy:", err.message);

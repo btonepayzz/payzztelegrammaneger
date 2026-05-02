@@ -23,6 +23,36 @@
     <section class="card">
       <h1 class="admin-page-title">Yönetim paneli</h1>
       <p class="muted">Panel kullanıcılarını ekleyin veya devre dışı bırakın.</p>
+
+      <h2 class="subsection-title">Telegram (Telethon) oturumu</h2>
+      <p class="muted">
+        Sunucuda oturum dosyası yoksa veya sıfırlandıysa kişisel Telegram hesabını <strong>telefon + SMS kodu</strong> ile buradan bağlayın.
+        İki aşamalı doğrulama açıksa son adımda Telegram “bulut şifresi” istenir.
+      </p>
+      <p id="telethonStatusLine" class="admin-msg" aria-live="polite"></p>
+      <div class="admin-form-grid">
+        <div>
+          <label for="telethonPhone">Telefon (uluslararası format)</label>
+          <input id="telethonPhone" type="tel" autocomplete="off" placeholder="+905551234567" />
+        </div>
+        <div>
+          <label for="telethonCode">Telegram’dan gelen kod</label>
+          <input id="telethonCode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="12345" />
+        </div>
+      </div>
+      <div id="telethonPwdWrap" class="admin-form-grid" style="display: none">
+        <div>
+          <label for="telethonPwd">İki aşamalı doğrulama şifresi</label>
+          <input id="telethonPwd" type="password" autocomplete="current-password" />
+        </div>
+      </div>
+      <div class="btn-row tight">
+        <button type="button" id="btnTelethonSendCode" class="btn-secondary">Kod gönder</button>
+        <button type="button" id="btnTelethonSignIn">Oturumu aç</button>
+        <button type="button" id="btnTelethonPassword" class="btn-secondary" style="display: none">2FA şifresini gönder</button>
+      </div>
+      <p id="telethonMsg" class="admin-msg" aria-live="polite"></p>
+
       <h2 class="subsection-title">Yeni kullanıcı</h2>
       <div class="admin-form-grid">
         <div>
@@ -185,6 +215,96 @@
       location.replace("/");
     };
 
+    async function loadTelethonStatus() {
+      const line = document.getElementById("telethonStatusLine");
+      const msg = document.getElementById("telethonMsg");
+      if (msg) msg.textContent = "";
+      try {
+        const r = await fetch("/api/admin/telethon/status");
+        const j = await safeJson(r, "Telethon");
+        if (!r.ok || !j.ok) {
+          if (line) line.textContent = "Durum alınamadı.";
+          return;
+        }
+        if (j.authorized) {
+          if (line) line.textContent = "Telethon oturumu: bağlı.";
+        } else if (j.login_code_pending) {
+          if (line)
+            line.textContent =
+              "Telethon oturumu: bekliyor — Telegram’a gönderilen kodu girin.";
+        } else {
+          if (line)
+            line.textContent =
+              "Telethon oturumu: yok — aşağıdan telefon ile kod isteyin.";
+        }
+      } catch {
+        if (line) line.textContent = "Durum alınamadı.";
+      }
+    }
+
+    document.getElementById("btnTelethonSendCode").addEventListener("click", async () => {
+      const msg = document.getElementById("telethonMsg");
+      const phone = document.getElementById("telethonPhone").value.trim();
+      const r = await fetch("/api/admin/telethon/send_code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const j = await safeJson(r, "Telethon");
+      if (!r.ok || !j.ok) {
+        if (msg) msg.textContent = j.error || "Kod gönderilemedi.";
+        return;
+      }
+      if (msg) msg.textContent = "Kod gönderildi; Telegram mesajını kontrol edin.";
+      document.getElementById("telethonPwdWrap").style.display = "none";
+      document.getElementById("btnTelethonPassword").style.display = "none";
+      await loadTelethonStatus();
+    });
+
+    document.getElementById("btnTelethonSignIn").addEventListener("click", async () => {
+      const msg = document.getElementById("telethonMsg");
+      const code = document.getElementById("telethonCode").value.trim();
+      const r = await fetch("/api/admin/telethon/sign_in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const j = await safeJson(r, "Telethon");
+      if (!r.ok || !j.ok) {
+        if (msg) msg.textContent = j.error || "Giriş başarısız.";
+        return;
+      }
+      if (j.need_password) {
+        document.getElementById("telethonPwdWrap").style.display = "grid";
+        document.getElementById("btnTelethonPassword").style.display = "inline-block";
+        if (msg) msg.textContent = "İki aşamalı doğrulama şifresini girin.";
+        return;
+      }
+      if (msg) msg.textContent = "Telethon oturumu açıldı.";
+      document.getElementById("telethonCode").value = "";
+      await loadTelethonStatus();
+    });
+
+    document.getElementById("btnTelethonPassword").addEventListener("click", async () => {
+      const msg = document.getElementById("telethonMsg");
+      const password = document.getElementById("telethonPwd").value;
+      const r = await fetch("/api/admin/telethon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const j = await safeJson(r, "Telethon");
+      if (!r.ok || !j.ok) {
+        if (msg) msg.textContent = j.error || "Şifre kabul edilmedi.";
+        return;
+      }
+      if (msg) msg.textContent = "Telethon oturumu açıldı.";
+      document.getElementById("telethonPwd").value = "";
+      document.getElementById("telethonPwdWrap").style.display = "none";
+      document.getElementById("btnTelethonPassword").style.display = "none";
+      await loadTelethonStatus();
+    });
+
     document.getElementById("btnAdminReload").addEventListener("click", loadAdminUsers);
     document.getElementById("btnAdminCreate").addEventListener("click", async () => {
       const el = document.getElementById("adminOut");
@@ -224,6 +344,7 @@
         const w = document.getElementById("whoami");
         if (w) w.textContent = "@" + me.username;
       }
+      await loadTelethonStatus();
       await loadAdminUsers();
     })();
   </script>

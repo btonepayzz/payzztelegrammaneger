@@ -38,6 +38,8 @@ async def periodic_sync(
     while True:
         await asyncio.sleep(interval)
         try:
+            if not await tele.is_user_authorized():
+                return
             await tele.refresh_dialogs_into_registry()
             me = await bot.get_me()
             await registry.run_bot_membership_probe(bot, me.id)
@@ -84,10 +86,10 @@ async def main() -> None:
         settings.api_hash,
         settings.telethon_session,
         registry,
-        string_session=settings.telethon_string_session,
     )
-    await tele.connect_and_login()
-    await tele.refresh_dialogs_into_registry()
+    await tele.connect_for_startup()
+    if await tele.is_user_authorized():
+        await tele.refresh_dialogs_into_registry()
 
     app = build_application(settings.bot_token, registry, tele, settings.admin_user_id)
     await app.initialize()
