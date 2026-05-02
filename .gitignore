@@ -1,0 +1,11 @@
+.env
+.webpanel_session_secret
+.webpanel_totp_secret
+*.session
+*.session-journal
+__pycache__/
+.venv/
+venv/
+webpanel/node_modules/
+webpanel/panel_totp.secret
+webpanel/panel_users.json

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yönetim — PAYZZ TELEGRAM YÖNETİM</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-left">
+      <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
+      <span id="whoami" class="muted whoami"></span>
+    </div>
+    <div class="top-right">
+      <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
+      <a class="top-link" href="/dashboard">Panele dön</a>
+      <button type="button" id="logout">Çıkış</button>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="card">
+      <h1 class="admin-page-title">Yönetim paneli</h1>
+      <p class="muted">Panel kullanıcılarını ekleyin veya devre dışı bırakın.</p>
+      <h2 class="subsection-title">Yeni kullanıcı</h2>
+      <div class="admin-form-grid">
+        <div>
+          <label for="admNewUser">Kullanıcı adı</label>
+          <input id="admNewUser" placeholder="ornek_kullanici" autocomplete="off" />
+        </div>
+        <div>
+          <label for="admNewPass">Şifre (en az 8)</label>
+          <input id="admNewPass" type="password" autocomplete="new-password" />
+        </div>
+      </div>
+      <label class="admin-check"><input type="checkbox" id="admNewAdmin" /> Yönetici yetkisi</label>
+      <label class="admin-check"><input type="checkbox" id="admNewActive" checked /> Hesap etkin</label>
+      <div class="btn-row">
+        <button type="button" id="btnAdminCreate">Kullanıcı oluştur</button>
+      </div>
+      <h2 class="subsection-title">Kullanıcılar</h2>
+      <div class="btn-row tight">
+        <button type="button" id="btnAdminReload" class="btn-tiny btn-secondary">Listeyi yenile</button>
+      </div>
+      <p id="adminMsg" class="admin-msg" aria-live="polite"></p>
+      <div id="adminFlash" class="admin-flash"></div>
+      <div id="adminOut" class="panel-result"></div>
+    </section>
+  </main>
+  <script>
+    window.addEventListener("pageshow", (ev) => {
+      if (ev.persisted) location.reload();
+    });
+
+    const escapeHtml = (s) => {
+      const d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    };
+
+    const emptyMsg = (text) =>
+      `<div class="empty-state">${escapeHtml(text)}</div>`;
+
+    async function safeJson(res, section) {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { ok: false, error: section + " yanıtı JSON değil: " + text.slice(0, 200) };
+      }
+    }
+
+    let currentPanelUser = null;
+
+    function renderAdminUsers(users) {
+      const el = document.getElementById("adminOut");
+      if (!users || !users.length) {
+        el.innerHTML = emptyMsg("Henüz kullanıcı yok.");
+        return;
+      }
+      const rows = users
+        .map((u) => {
+          const self = currentPanelUser && u.username === currentPanelUser;
+          const badge = u.active
+            ? `<span class="badge badge-on">Etkin</span>`
+            : `<span class="badge badge-off">Kapalı</span>`;
+          const role = u.admin ? `<span class="badge badge-admin">Yönetici</span>` : `<span class="muted">Panel</span>`;
+          const mfa = u.totp_enrolled
+            ? `<span class="badge badge-on">2FA kurulu</span>`
+            : `<span class="badge badge-warn">İlk girişte QR</span>`;
+          const btns = [];
+          if (!self) {
+            btns.push(
+              `<button type="button" class="btn-tiny btn-secondary btn-admin-toggle" data-user="${escapeHtml(
+                u.username
+              )}" data-field="active" data-next="${u.active ? "0" : "1"}">${u.active ? "Devre dışı" : "Etkinleştir"}</button>`
+            );
+            btns.push(
+              `<button type="button" class="btn-tiny btn-secondary btn-admin-toggle" data-user="${escapeHtml(
+                u.username
+              )}" data-field="admin" data-next="${u.admin ? "0" : "1"}">${u.admin ? "Yönetici kaldır" : "Yönetici yap"}</button>`
+            );
+          } else {
+            btns.push(`<span class="muted small">Bu hesap sizin</span>`);
+          }
+          btns.push(
+            `<button type="button" class="btn-tiny btn-secondary btn-admin-totp-reset" data-user="${escapeHtml(
+              u.username
+            )}">2FA sıfırla</button>`
+          );
+          return `<tr>
+            <td><strong>${escapeHtml(u.username)}</strong>${self ? " (siz)" : ""}</td>
+            <td>${badge} ${role}</td>
+            <td>${mfa}</td>
+            <td class="mono small">${escapeHtml(u.created_at || "—")}</td>
+            <td class="admin-actions">${btns.join(" ")}</td>
+          </tr>`;
+        })
+        .join("");
+      el.innerHTML = `<div class="table-wrap"><table class="data-table admin-table">
+        <thead><tr><th>Kullanıcı</th><th>Durum</th><th>2FA</th><th>Oluşturulma</th><th>İşlem</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+      const flash = document.getElementById("adminFlash");
+      if (flash) flash.innerHTML = "";
+      el.querySelectorAll(".btn-admin-toggle").forEach((b) => {
+        b.onclick = async () => {
+          const user = b.getAttribute("data-user");
+          const field = b.getAttribute("data-field");
+          const next = b.getAttribute("data-next") === "1";
+          const body = field === "active" ? { active: next } : { admin: next };
+          const r = await fetch("/api/admin/users/" + encodeURIComponent(user), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const j = await safeJson(r, "Yönetim");
+          const flashEl = document.getElementById("adminFlash");
+          if (!r.ok) {
+            if (flashEl) {
+              flashEl.innerHTML = `<div class="banner banner-error">${escapeHtml(j.error || "Hata")}</div>`;
+            }
+            return;
+          }
+          if (flashEl) flashEl.innerHTML = "";
+          loadAdminUsers();
+        };
+      });
+      el.querySelectorAll(".btn-admin-totp-reset").forEach((b) => {
+        b.onclick = async () => {
+          const user = b.getAttribute("data-user");
+          const r = await fetch("/api/admin/users/" + encodeURIComponent(user), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ totp_reset: true }),
+          });
+          const j = await safeJson(r, "Yönetim");
+          const flashEl = document.getElementById("adminFlash");
+          if (!r.ok) {
+            if (flashEl) {
+              flashEl.innerHTML = `<div class="banner banner-error">${escapeHtml(j.error || "Hata")}</div>`;
+            }
+            return;
+          }
+          if (flashEl) flashEl.innerHTML = "";
+          loadAdminUsers();
+        };
+      });
+    }
+
+    async function loadAdminUsers() {
+      const el = document.getElementById("adminOut");
+      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      const r = await fetch("/api/admin/users");
+      const j = await safeJson(r, "Yönetim");
+      if (!r.ok) {
+        el.innerHTML = `<div class="banner banner-error">${escapeHtml(j.error || "Liste alınamadı")}</div>`;
+        return;
+      }
+      renderAdminUsers(j.users || []);
+    }
+
+    document.getElementById("logout").onclick = async () => {
+      await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+      location.replace("/");
+    };
+
+    document.getElementById("btnAdminReload").addEventListener("click", loadAdminUsers);
+    document.getElementById("btnAdminCreate").addEventListener("click", async () => {
+      const el = document.getElementById("adminOut");
+      const username = document.getElementById("admNewUser").value.trim();
+      const password = document.getElementById("admNewPass").value;
+      const admin = document.getElementById("admNewAdmin").checked;
+      const active = document.getElementById("admNewActive").checked;
+      const r = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, admin, active }),
+      });
+      const j = await safeJson(r, "Yönetim");
+      if (!r.ok) {
+        el.innerHTML = `<div class="banner banner-error">${escapeHtml(j.error || "Oluşturulamadı")}</div>`;
+        return;
+      }
+      document.getElementById("admNewUser").value = "";
+      document.getElementById("admNewPass").value = "";
+      document.getElementById("admNewAdmin").checked = false;
+      document.getElementById("admNewActive").checked = true;
+      await loadAdminUsers();
+      const msg = document.getElementById("adminMsg");
+      if (msg) {
+        msg.textContent = "Kullanıcı eklendi.";
+        setTimeout(() => {
+          msg.textContent = "";
+        }, 4000);
+      }
+    });
+
+    (async () => {
+      const r = await fetch("/api/me");
+      const me = await safeJson(r, "Oturum");
+      if (me && me.username) {
+        currentPanelUser = me.username;
+        const w = document.getElementById("whoami");
+        if (w) w.textContent = "@" + me.username;
+      }
+      await loadAdminUsers();
+    })();
+  </script>
+  <script src="/theme-toggle.js"></script>
+</body>
+</html>

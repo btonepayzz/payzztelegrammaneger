@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PAYZZ TELEGRAM YÖNETİM — Giriş</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="auth">
+  <button type="button" class="theme-toggle auth-theme-corner" aria-label="Tema">🌙</button>
+  <main class="card auth-card">
+    <h1 class="brand-title">PAYZZ TELEGRAM YÖNETİM</h1>
+    <p class="muted welcome-line">Hoş geldiniz.</p>
+    <form id="f">
+      <label for="u">Kullanıcı adı</label>
+      <input id="u" name="username" autocomplete="username" required />
+      <label for="p">Şifre</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" required />
+      <button type="submit" id="btnLogin">Devam</button>
+      <p id="err" class="err"></p>
+    </form>
+  </main>
+
+  <div id="totpBackdrop" class="totp-backdrop hidden" aria-hidden="true"></div>
+  <div
+    id="totpModal"
+    class="totp-modal hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="totpTitle"
+  >
+    <div class="totp-modal-inner card">
+      <h2 id="totpTitle">İki adımlı doğrulama</h2>
+      <div id="totpEnrollBlock" class="hidden">
+        <p class="muted">Authenticator uygulamasıyla QR kodu tarayın veya anahtarı elle girin. Ardından üretilen 6 haneli kodu yazın.</p>
+        <div class="totp-qr-wrap">
+          <img id="totpQr" class="totp-qr" alt="2FA QR kodu" width="220" height="220" />
+        </div>
+        <label>Manuel anahtar</label>
+        <div class="totp-secret-row">
+          <code id="totpSecretText" class="totp-secret"></code>
+          <button type="button" class="btn-tiny btn-secondary" id="btnCopySecret">Kopyala</button>
+        </div>
+      </div>
+      <div id="totpVerifyBlock">
+        <p id="totpVerifyHint" class="muted">Authenticator uygulamanızdaki 6 haneli kodu girin.</p>
+        <label for="totpInput">Doğrulayıcı kodu</label>
+        <input id="totpInput" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="one-time-code" autofocus />
+      </div>
+      <div class="btn-row totp-modal-actions">
+        <button type="button" id="btnTotpSubmit">Girişi tamamla</button>
+        <button type="button" class="btn-secondary" id="btnTotpCancel">Vazgeç</button>
+      </div>
+      <p id="totpErr" class="err"></p>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener("pageshow", (ev) => {
+      if (ev.persisted) location.reload();
+    });
+
+    const $ = (id) => document.getElementById(id);
+    const backdrop = $("totpBackdrop");
+    const modal = $("totpModal");
+    const enrollBlock = $("totpEnrollBlock");
+    const verifyBlock = $("totpVerifyBlock");
+    const totpQr = $("totpQr");
+    const totpSecretText = $("totpSecretText");
+    const totpInput = $("totpInput");
+    const totpErr = $("totpErr");
+    const totpVerifyHint = $("totpVerifyHint");
+
+    function openTotpModal(enrolled, provisioning) {
+      totpErr.textContent = "";
+      totpInput.value = "";
+      if (!enrolled && provisioning) {
+        enrollBlock.classList.remove("hidden");
+        verifyBlock.classList.remove("hidden");
+        totpVerifyHint.textContent =
+          "Kodu ekledikten sonra aşağıdaki 6 haneli kodu girerek 2FA yı etkinleştirin.";
+        totpQr.src = provisioning.qr_data_url || "";
+        totpQr.alt = "2FA kurulum QR";
+        totpSecretText.textContent = provisioning.secret || "";
+      } else {
+        enrollBlock.classList.add("hidden");
+        verifyBlock.classList.remove("hidden");
+        totpVerifyHint.textContent = "Authenticator uygulamanızdaki 6 haneli kodu girin.";
+      }
+      backdrop.classList.remove("hidden");
+      modal.classList.remove("hidden");
+      backdrop.setAttribute("aria-hidden", "false");
+      setTimeout(() => totpInput.focus(), 50);
+    }
+
+    function closeTotpModal() {
+      backdrop.classList.add("hidden");
+      modal.classList.add("hidden");
+      backdrop.setAttribute("aria-hidden", "true");
+      totpQr.removeAttribute("src");
+    }
+
+    async function cancelChallenge() {
+      try {
+        await fetch("/api/login/cancel", { method: "POST" });
+      } catch (_) {}
+      closeTotpModal();
+    }
+
+    $("btnCopySecret").onclick = async () => {
+      const t = totpSecretText.textContent || "";
+      try {
+        await navigator.clipboard.writeText(t);
+        $("btnCopySecret").textContent = "Kopyalandı";
+        setTimeout(() => {
+          $("btnCopySecret").textContent = "Kopyala";
+        }, 2000);
+      } catch {
+        totpErr.textContent = "Panoya kopyalanamadı; anahtarı elle seçip kopyalayın.";
+      }
+    };
+
+    $("btnTotpCancel").onclick = () => {
+      cancelChallenge();
+    };
+
+    $("btnTotpSubmit").onclick = async () => {
+      totpErr.textContent = "";
+      const totp = totpInput.value.trim().replace(/\s/g, "");
+      const r = await fetch("/api/login/totp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ totp }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        totpErr.textContent = j.error || "Doğrulama başarısız";
+        return;
+      }
+      location.href = "/dashboard";
+    };
+
+    totpInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        $("btnTotpSubmit").click();
+      }
+    });
+
+    document.getElementById("f").onsubmit = async (e) => {
+      e.preventDefault();
+      const err = $("err");
+      err.textContent = "";
+      const fd = new FormData(e.target);
+      const body = {
+        username: fd.get("username"),
+        password: fd.get("password"),
+      };
+      const r = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        err.textContent = j.error || "Giriş başarısız";
+        return;
+      }
+      if (j.step !== "totp") {
+        err.textContent = "Beklenmeyen yanıt.";
+        return;
+      }
+      openTotpModal(j.enrolled === true, j.provisioning);
+    };
+  </script>
+  <script src="/theme-toggle.js"></script>
+</body>
+</html>

@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PAYZZ TELEGRAM YÖNETİM</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-left">
+      <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
+      <span id="whoami" class="muted whoami"></span>
+    </div>
+    <div class="top-right">
+      <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
+      <a id="linkAdmin" class="top-link hidden" href="/admin">Yönetim</a>
+      <button type="button" id="logout">Çıkış</button>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="card card-collapsible">
+      <button type="button" class="card-collapse-toggle" id="toggle-joint" aria-expanded="true" aria-controls="panel-joint">
+        <span class="card-collapse-icon" aria-hidden="true"></span>
+        <span class="card-collapse-heading">Ortak gruplar</span>
+      </button>
+      <div id="panel-joint" class="card-collapse-body" role="region" aria-labelledby="toggle-joint">
+        <p class="muted">Bot ile birlikte üye olduğunuz gruplar. «Senkron» Telegram diyaloglarını yeniler; ardından listeyi tekrar yükleyin.</p>
+        <div class="btn-row">
+          <button type="button" id="btnJoint">Listeyi yükle</button>
+          <button type="button" id="btnRefresh" class="btn-secondary">Senkron (/refresh)</button>
+        </div>
+        <div id="jointOut" class="panel-result" aria-live="polite"></div>
+      </div>
+    </section>
+    <section class="card card-collapsible">
+      <button type="button" class="card-collapse-toggle" id="toggle-invite" aria-expanded="true" aria-controls="panel-invite">
+        <span class="card-collapse-icon" aria-hidden="true"></span>
+        <span class="card-collapse-heading">Davet paketi</span>
+      </button>
+      <div id="panel-invite" class="card-collapse-body" role="region" aria-labelledby="toggle-invite">
+        <p class="muted">Hedef kullanıcıya özel davet linkleri üretilir; talimatlar Telethon hesabından DM ile gider.</p>
+        <label for="invUser">Hedef kullanıcı adı</label>
+        <input id="invUser" placeholder="kullaniciadi" autocomplete="off" />
+        <div class="btn-row">
+          <button type="button" id="btnInvite">Davet oluştur</button>
+        </div>
+        <div id="invOut" class="panel-result" aria-live="polite"></div>
+      </div>
+    </section>
+    <section class="card card-collapsible">
+      <button type="button" class="card-collapse-toggle" id="toggle-kick" aria-expanded="true" aria-controls="panel-kick">
+        <span class="card-collapse-icon" aria-hidden="true"></span>
+        <span class="card-collapse-heading">Toplu çıkarma</span>
+      </button>
+      <div id="panel-kick" class="card-collapse-body" role="region" aria-labelledby="toggle-kick">
+        <p class="muted">
+          Önce kullanıcı adını yazıp «Üyelikleri yükle» deyin; grupları arayıp işaretleyerek yalnızca seçtiklerinizden çıkarabilir veya tüm ortak gruplardan tek seferde çıkarabilirsiniz.
+        </p>
+        <label for="kickUser">Hedef kullanıcı adı</label>
+        <input id="kickUser" placeholder="kullaniciadi" autocomplete="off" />
+        <div class="btn-row">
+          <button type="button" id="btnKickPreview" class="btn-secondary">Üyelikleri yükle</button>
+        </div>
+        <div id="kickPickPanel" class="kick-pick-panel hidden">
+          <label for="kickFilter">Grup ara (isim veya chat ID)</label>
+          <input type="search" id="kickFilter" placeholder="Yazarak süz…" autocomplete="off" />
+          <div class="btn-row tight">
+            <button type="button" id="btnKickSelectAll" class="btn-tiny btn-secondary">Tümünü seç</button>
+            <button type="button" id="btnKickSelectVisible" class="btn-tiny btn-secondary">Görünenleri seç</button>
+            <button type="button" id="btnKickClearSel" class="btn-tiny btn-secondary">Seçimi temizle</button>
+          </div>
+          <div id="kickPickList" class="kick-pick-list"></div>
+          <p id="kickPickMeta" class="muted small"></p>
+          <div class="btn-row">
+            <button type="button" id="btnKickSelected">Seçilen gruplardan çıkar</button>
+            <button type="button" id="btnKickAll" class="btn-secondary">Tüm ortak gruplardan çıkar</button>
+          </div>
+        </div>
+        <div id="kickOut" class="panel-result" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    window.addEventListener("pageshow", (ev) => {
+      if (ev.persisted) location.reload();
+    });
+
+    document.querySelectorAll(".card-collapsible").forEach((card) => {
+      const btn = card.querySelector(".card-collapse-toggle");
+      if (!btn) return;
+      btn.addEventListener("click", () => {
+        const collapsed = card.classList.toggle("card-collapsed");
+        btn.setAttribute("aria-expanded", String(!collapsed));
+      });
+    });
+
+    const escapeHtml = (s) => {
+      const d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    };
+
+    const emptyMsg = (text) =>
+      `<div class="empty-state">${escapeHtml(text)}</div>`;
+
+    function renderJoint(data) {
+      const el = document.getElementById("jointOut");
+      if (data.groups && Array.isArray(data.groups)) {
+        const n = data.count ?? data.groups.length;
+        if (!data.groups.length) {
+          el.innerHTML =
+            emptyMsg("Henüz ortak grup yok. Önce «Senkron» çalıştırın, sonra tekrar deneyin.") +
+            `<p class="muted small">Kayıtlı grup sayısı: <strong>0</strong></p>`;
+          return;
+        }
+        const rows = data.groups
+          .map(
+            (g, i) =>
+              `<tr>
+                <td class="num">${i + 1}</td>
+                <td class="title">${escapeHtml(g.title || "—")}</td>
+                <td class="mono"><code>${escapeHtml(String(g.chat_id))}</code></td>
+              </tr>`
+          )
+          .join("");
+        el.innerHTML = `
+          <p class="summary-line success"><strong>${n}</strong> ortak grup listeleniyor.</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Grup adı</th><th>Chat ID</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+        return;
+      }
+      if (data.ok && data.verified_joint_groups != null) {
+        el.innerHTML = `
+          <div class="banner banner-success">
+            <strong>Senkron tamam.</strong> Doğrulanan ortak grup sayısı: <strong>${escapeHtml(
+              String(data.verified_joint_groups)
+            )}</strong>
+          </div>
+          <p class="muted small">Güncel listeyi görmek için «Listeyi yükle»ye basın.</p>`;
+        return;
+      }
+      el.innerHTML =
+        `<pre class="raw-fallback">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+    }
+
+    function parseInviteError(line) {
+      const m = /^(.+) \((-?\d+)\): (.+)$/.exec(line);
+      if (m) return { title: m[1], chatId: m[2], msg: m[3] };
+      return { title: null, chatId: null, msg: line };
+    }
+
+    function renderInvite(data) {
+      const el = document.getElementById("invOut");
+      if (!data || typeof data !== "object") {
+        el.innerHTML = emptyMsg("Beklenmeyen yanıt.");
+        return;
+      }
+      if (!data.ok) {
+        const err = data.error || "İşlem başarısız.";
+        let html = `<div class="banner banner-error"><strong>Hata.</strong> ${escapeHtml(err)}</div>`;
+        if (Array.isArray(data.details) && data.details.length) {
+          html += `<p class="muted small">Ayrıntılar:</p><ul class="alert-list">`;
+          for (const d of data.details) {
+            html += `<li>${escapeHtml(String(d))}</li>`;
+          }
+          html += `</ul>`;
+        }
+        el.innerHTML = html;
+        return;
+      }
+
+      const errs = Array.isArray(data.errors) ? data.errors : [];
+      const dmOk = data.dm_sent;
+      const dmErr = data.dm_error;
+
+      let dmBlock = "";
+      if (dmOk) {
+        dmBlock = `<div class="banner banner-success">Talimat mesajı hedef kullanıcıya gönderildi.</div>`;
+      } else if (dmErr) {
+        dmBlock = `<div class="banner banner-warn"><strong>DM gönderilemedi.</strong> ${escapeHtml(
+          dmErr
+        )}<br/><span class="muted small">Linkler yine de oluşturuldu; kullanıcıya manuel iletebilirsiniz.</span></div>`;
+      } else {
+        dmBlock = `<div class="banner banner-warn">DM durumu bilinmiyor.</div>`;
+      }
+
+      let errSection = "";
+      if (errs.length) {
+        errSection = `<h3 class="subsection-title">Kısmi hatalar (${errs.length} grup)</h3>
+          <p class="muted small">Bu gruplarda link üretilemedi (yetki, grup türü veya Telegram limiti).</p>
+          <div class="error-cards">`;
+        for (const line of errs) {
+          const p = parseInviteError(line);
+          errSection += `<div class="error-card">
+            <div class="error-card-head">${escapeHtml(p.title || "Grup")}</div>
+            ${p.chatId ? `<div class="mono subtle">ID: ${escapeHtml(p.chatId)}</div>` : ""}
+            <div class="error-card-msg">${escapeHtml(p.msg)}</div>
+          </div>`;
+        }
+        errSection += `</div>`;
+      }
+
+      const sample = Array.isArray(data.sample) ? data.sample : [];
+      let sampleHtml = "";
+      if (sample.length) {
+        sampleHtml = `<h3 class="subsection-title">Örnek başarılı gruplar</h3><ul class="sample-list">`;
+        for (const s of sample) {
+          sampleHtml += `<li><strong>${escapeHtml(s.title || "—")}</strong> <span class="muted">(${escapeHtml(
+            s.method || "?"
+          )})</span></li>`;
+        }
+        sampleHtml += `</ul>`;
+      }
+
+      el.innerHTML = `
+        <div class="summary-grid">
+          <div class="stat"><span class="stat-label">Kullanıcı</span><span class="stat-value">@${escapeHtml(
+            data.username || ""
+          )}</span></div>
+          <div class="stat"><span class="stat-label">Telegram ID</span><span class="stat-value mono">${escapeHtml(
+            String(data.target_id ?? "—")
+          )}</span></div>
+          <div class="stat"><span class="stat-label">Üretilen link</span><span class="stat-value"><strong>${escapeHtml(
+            String(data.link_count ?? 0)
+          )}</strong> / grup</span></div>
+        </div>
+        ${dmBlock}
+        ${sampleHtml}
+        ${errSection}
+        <p class="muted small">Tam liste ve butonlar hedef kullanıcı bota <code>/davet</code> yazdığında gösterilir.</p>`;
+    }
+
+    let kickPreviewData = null;
+
+    function renderKickPickList() {
+      const listEl = document.getElementById("kickPickList");
+      const metaEl = document.getElementById("kickPickMeta");
+      if (!kickPreviewData || !kickPreviewData.groups) {
+        listEl.innerHTML = "";
+        return;
+      }
+      const groups = kickPreviewData.groups;
+      const q = (document.getElementById("kickFilter").value || "").trim().toLowerCase();
+      if (!groups.length) {
+        listEl.innerHTML = emptyMsg(
+          kickPreviewData.message || "Bu kullanıcı ortak gruplarda görünmüyor."
+        );
+        metaEl.textContent = "";
+        return;
+      }
+      const prevChecked = new Set(
+        Array.from(document.querySelectorAll('#kickPickList input[name="kickcid"]:checked')).map(
+          (el) => el.value
+        )
+      );
+      let visible = 0;
+      const rows = groups
+        .map((g) => {
+          const title = (g.title || "").toLowerCase();
+          const idStr = String(g.chat_id);
+          const match =
+            !q || title.includes(q) || idStr.includes(q);
+          if (match) visible++;
+          const hid = match ? "" : " filtered-out";
+          return `<label class="kick-pick-row${hid}">
+            <input type="checkbox" name="kickcid" value="${escapeHtml(idStr)}" />
+            <span class="kick-pick-title">${escapeHtml(g.title || "—")}</span>
+            <code class="kick-pick-id">${escapeHtml(idStr)}</code>
+          </label>`;
+        })
+        .join("");
+      listEl.innerHTML = rows;
+      document.querySelectorAll('#kickPickList input[name="kickcid"]').forEach((el) => {
+        if (prevChecked.has(el.value)) el.checked = true;
+      });
+      const sel = document.querySelectorAll('#kickPickList input[name="kickcid"]:checked').length;
+      metaEl.textContent = `${groups.length} grupta üye · süzgeçle ${visible} satır görünüyor · ${sel} seçili`;
+    }
+
+    function getSelectedKickChatIds() {
+      return Array.from(document.querySelectorAll('#kickPickList input[name="kickcid"]:checked'))
+        .map((el) => parseInt(el.value, 10))
+        .filter((n) => !Number.isNaN(n));
+    }
+
+    function selectKickVisible() {
+      document.querySelectorAll("#kickPickList .kick-pick-row:not(.filtered-out) input").forEach((el) => {
+        el.checked = true;
+      });
+      renderKickPickList();
+    }
+
+    function renderKick(data) {
+      const el = document.getElementById("kickOut");
+      if (!data || typeof data !== "object") {
+        el.innerHTML = emptyMsg("Beklenmeyen yanıt.");
+        return;
+      }
+      if (!data.ok) {
+        el.innerHTML = `<div class="banner banner-error"><strong>Hata.</strong> ${escapeHtml(
+          data.error || "İşlem başarısız."
+        )}</div>`;
+        return;
+      }
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      const subset = data.subset === true;
+      const ignored = Array.isArray(data.ignored_chat_ids) ? data.ignored_chat_ids : [];
+      let note = "";
+      if (subset && ignored.length) {
+        note = `<p class="muted small">İstekte olup hedefin üye olmadığı chat ID'leri yok sayıldı: ${escapeHtml(
+          ignored.join(", ")
+        )}</p>`;
+      }
+      let modeLine = subset
+        ? `<span class="muted small">Yalnızca seçilen gruplar.</span>`
+        : `<span class="muted small">Tüm ortak gruplar.</span>`;
+      let body = `<div class="banner banner-success">
+        <strong>Tamam.</strong> @${escapeHtml(data.username || "")} — <strong>${escapeHtml(
+        String(data.group_count ?? 0)
+      )}</strong> grupta işlem denendi. ${modeLine}
+      </div>${note}`;
+      if (!lines.length) {
+        el.innerHTML = body + emptyMsg("Detay satırı yok.");
+        return;
+      }
+      const start = lines[0] === "Sonuçlar:" ? 1 : 0;
+      body += `<div class="kick-results">`;
+      for (let i = start; i < lines.length; i += 2) {
+        const titleLine = lines[i] || "";
+        const detailLine = lines[i + 1] || "";
+        const title = titleLine.replace(/^•\s*/, "").trim();
+        const failed = detailLine.includes("Başarısız");
+        body += `<div class="kick-row ${failed ? "kick-fail" : "kick-ok"}">
+          <div class="kick-title">${escapeHtml(title || titleLine)}</div>
+          <div class="kick-detail">${escapeHtml(detailLine)}</div>
+        </div>`;
+      }
+      body += `</div>`;
+      el.innerHTML = body;
+    }
+
+    async function safeJson(res, section) {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { ok: false, error: section + " yanıtı JSON değil: " + text.slice(0, 200) };
+      }
+    }
+
+    document.getElementById("logout").onclick = async () => {
+      await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+      location.replace("/");
+    };
+
+    document.getElementById("btnJoint").onclick = async () => {
+      const el = document.getElementById("jointOut");
+      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      const r = await fetch("/api/joint");
+      const j = await safeJson(r, "Liste");
+      renderJoint(j);
+    };
+
+    document.getElementById("btnRefresh").onclick = async () => {
+      const el = document.getElementById("jointOut");
+      el.innerHTML = `<div class="loading">Senkron çalışıyor…</div>`;
+      const r = await fetch("/api/refresh", { method: "POST" });
+      const j = await safeJson(r, "Senkron");
+      renderJoint(j);
+    };
+
+    document.getElementById("btnInvite").onclick = async () => {
+      const u = document.getElementById("invUser").value.trim();
+      const el = document.getElementById("invOut");
+      el.innerHTML = `<div class="loading">Davetler oluşturuluyor (birkaç saniye sürebilir)…</div>`;
+      const r = await fetch("/api/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u }),
+      });
+      const j = await safeJson(r, "Davet");
+      renderInvite(j);
+    };
+
+    document.getElementById("btnKickPreview").onclick = async () => {
+      const u = document.getElementById("kickUser").value.trim();
+      const panel = document.getElementById("kickPickPanel");
+      const out = document.getElementById("kickOut");
+      out.innerHTML = `<div class="loading">Üyelikler taranıyor…</div>`;
+      kickPreviewData = null;
+      panel.classList.add("hidden");
+      const r = await fetch("/api/kick/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u }),
+      });
+      const j = await safeJson(r, "Önizleme");
+      out.innerHTML = "";
+      if (!j.ok) {
+        out.innerHTML = `<div class="banner banner-error"><strong>Yüklenemedi.</strong> ${escapeHtml(
+          j.error || "Hata"
+        )}</div>`;
+        return;
+      }
+      kickPreviewData = j;
+      document.getElementById("kickFilter").value = "";
+      panel.classList.remove("hidden");
+      renderKickPickList();
+    };
+
+    document.getElementById("kickFilter").addEventListener("input", () => renderKickPickList());
+
+    document.getElementById("btnKickSelectAll").onclick = () => {
+      document.querySelectorAll('#kickPickList input[name="kickcid"]').forEach((el) => {
+        el.checked = true;
+      });
+      renderKickPickList();
+    };
+
+    document.getElementById("btnKickSelectVisible").onclick = () => selectKickVisible();
+
+    document.getElementById("btnKickClearSel").onclick = () => {
+      document.querySelectorAll('#kickPickList input[name="kickcid"]').forEach((el) => {
+        el.checked = false;
+      });
+      renderKickPickList();
+    };
+
+    document.getElementById("kickPickList").addEventListener("change", (e) => {
+      if (e.target && e.target.matches('input[name="kickcid"]')) renderKickPickList();
+    });
+
+    document.getElementById("btnKickSelected").onclick = async () => {
+      const u = document.getElementById("kickUser").value.trim();
+      const ids = getSelectedKickChatIds();
+      const el = document.getElementById("kickOut");
+      if (!ids.length) {
+        el.innerHTML = `<div class="banner banner-warn">Önce en az bir grup işaretleyin veya «Tüm ortak gruplardan çıkar» kullanın.</div>`;
+        return;
+      }
+      el.innerHTML = `<div class="loading">Seçilen gruplarda çıkarma…</div>`;
+      const r = await fetch("/api/kick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, chat_ids: ids }),
+      });
+      const j = await safeJson(r, "Çıkarma");
+      renderKick(j);
+    };
+
+    document.getElementById("btnKickAll").onclick = async () => {
+      const u = document.getElementById("kickUser").value.trim();
+      const el = document.getElementById("kickOut");
+      el.innerHTML = `<div class="loading">Tüm ortak gruplarda çıkarma…</div>`;
+      const r = await fetch("/api/kick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u }),
+      });
+      const j = await safeJson(r, "Çıkarma");
+      renderKick(j);
+    };
+
+    (async () => {
+      const r = await fetch("/api/me");
+      const me = await safeJson(r, "Oturum");
+      if (me && me.username) {
+        const w = document.getElementById("whoami");
+        if (w) w.textContent = "@" + me.username;
+      }
+      if (me && me.is_admin) {
+        const link = document.getElementById("linkAdmin");
+        if (link) link.classList.remove("hidden");
+      }
+    })();
+  </script>
+  <script src="/theme-toggle.js"></script>
+</body>
+</html>
