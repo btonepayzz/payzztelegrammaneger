@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import sys
 from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
@@ -58,6 +59,38 @@ def _needs_prompt(values: dict[str, str | None]) -> bool:
     aid = _norm_id(values.get("TELEGRAM_API_ID"))
     hsh = _norm_hash(values.get("TELEGRAM_API_HASH"))
     return not (tok and aid and hsh and looks_like_bot_token(tok))
+
+
+def _non_interactive_runtime() -> bool:
+    """Railway/Docker/CI'da TTY yok; getpass/input EOF verir."""
+    if os.environ.get("CI"):
+        return True
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"):
+        return True
+    try:
+        return not sys.stdin.isatty()
+    except Exception:
+        return True
+
+
+def _die_missing_env_for_deploy(values: dict[str, str | None]) -> None:
+    tok = _norm_token(values.get("BOT_TOKEN"))
+    aid = _norm_id(values.get("TELEGRAM_API_ID"))
+    hsh = _norm_hash(values.get("TELEGRAM_API_HASH"))
+    parts = [
+        "Ortam değişkenleri eksik veya geçersiz; konteynerda etkileşimli kurulum yapılamaz.",
+        "Railway / PaaS: Project → Service → Variables içinde şunları tanımla (referans: .env.example):",
+        "  BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH",
+    ]
+    if not tok:
+        parts.append("- BOT_TOKEN boş.")
+    elif not looks_like_bot_token(tok):
+        parts.append("- BOT_TOKEN biçimi geçersiz (BotFather token formatı).")
+    if not aid:
+        parts.append("- TELEGRAM_API_ID boş.")
+    if not hsh:
+        parts.append("- TELEGRAM_API_HASH boş.")
+    raise SystemExit("\n".join(parts))
 
 
 def _gather_missing(env_path: Path) -> dict[str, str]:
@@ -135,6 +168,9 @@ def ensure_env_interactive(root: Path) -> None:
             effective[key] = str(ev).strip()
     if not _needs_prompt(effective):
         return
+
+    if _non_interactive_runtime():
+        _die_missing_env_for_deploy(effective)
 
     data = _gather_missing(env_path)
     _write_env(env_path, data)
