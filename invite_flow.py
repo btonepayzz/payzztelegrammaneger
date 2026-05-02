@@ -25,6 +25,7 @@ from telegram.ext import (
 
 from admin_gate import gate_operator_or_reply
 from group_registry import GroupRegistry
+from invite_store import append_bot_keyboard_messages, record_invite_package
 from telethon_service import TelethonService
 
 log = logging.getLogger(__name__)
@@ -89,6 +90,44 @@ def _strip_username(text: str) -> str:
     return t.strip()
 
 
+def _humanize_invite_link_error(raw: str) -> str:
+    """Bot/Telethon davet linki hatalarını panele kısa Türkçe özet döndürür (tam metin loglanır)."""
+    s = (raw or "").strip().lower()
+    if not s:
+        return "Davet linki alınamadı."
+
+    if any(
+        k in s
+        for k in (
+            "not enough rights",
+            "invite link",
+            "chat admin",
+            "admin privileges",
+            "exportchatinvite",
+            "chat_admin_required",
+            "invite_users",
+            "user_admin_invalid",
+            "need administrator rights",
+            "required to do that in the specified chat",
+        )
+    ):
+        return (
+            "Davet linki için yetki yetersiz: hesap bu grupta yönetici olmalı ve "
+            "«üyeler davet bağlantısı ile eklenebilir» iznine sahip olmalı."
+        )
+
+    if "flood" in s or "too many requests" in s:
+        return "Çok sık istek; Telegram geçici limit koydu. Bir süre sonra yeniden deneyin."
+
+    if ("peer" in s or "chat_id" in s) and "invalid" in s:
+        return "Grup bulunamadı veya geçersiz."
+
+    if "forbidden" in s:
+        return "Bu gruba erişim engellenmiş veya işlem yasak."
+
+    return "Davet linki alınamadı; grup türünü ve bot ile bağlı hesabın yönetici izinlerini kontrol edin."
+
+
 async def _create_invite_joint(bot, tele: TelethonService, chat_id: int) -> tuple[bool, str, str]:
     """(ok, url_or_err_detail, method_label)"""
     try:
@@ -99,7 +138,9 @@ async def _create_invite_joint(bot, tele: TelethonService, chat_id: int) -> tupl
         if ok:
             return True, link, "Telethon"
         bot_err = e if isinstance(e, TelegramError) else str(e)
-        return False, f"{bot_err!s} | Telethon: {link}", ""
+        combined = f"{bot_err!s} | Telethon: {link}"
+        log.warning("Davet linki üretilemedi chat_id=%s: %s", chat_id, combined)
+        return False, _humanize_invite_link_error(combined), ""
 
 
 async def _build_invites_for_joint_groups(
@@ -133,10 +174,11 @@ async def _send_invite_keyboard_chunks(
     entries: list[tuple[int, str, str]],
     *,
     header: str,
-) -> None:
-    """URL düğmeleri + son blokta Katıldım."""
+) -> list[int]:
+    """URL düğmeleri + son blokta Katıldım. Gönderilen her mesajın id listesi (panelden silme için)."""
+    sent_ids: list[int] = []
     if not entries:
-        return
+        return sent_ids
     n = len(entries)
     stride = MAX_URL_BUTTONS_PER_MSG
     parts = (n + stride - 1) // stride
@@ -161,11 +203,13 @@ async def _send_invite_keyboard_chunks(
             ]
         )
         cap = f"{header}\n(Bölüm {part_num}/{parts})" if parts > 1 else header
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=chat_user_id,
             text=cap,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
+        sent_ids.append(msg.message_id)
+    return sent_ids
 
 
 async def invite_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -242,12 +286,21 @@ async def create_invite_package(
     )
     dm_ok = False
     dm_err: str | None = None
+    telethon_dm_message_id: int | None = None
     try:
-        await tele.client.send_message(target_uid, dm)
+        sent = await tele.client.send_message(target_uid, dm)
         dm_ok = True
+        telethon_dm_message_id = int(getattr(sent, "id", 0)) or None
     except Exception as e:
         log.exception("Telethon DM gönderilemedi")
         dm_err = str(e)
+
+    record_invite_package(
+        uname,
+        target_uid,
+        operator_chat_id,
+        telethon_dm_message_id=telethon_dm_message_id,
+    )
 
     return {
         "ok": True,
@@ -346,13 +399,14 @@ async def deliver_invite_claim(update: Update, context: ContextTypes.DEFAULT_TYP
         expires_at=time.time() + INVITE_TRACKING_TTL_SEC,
     )
 
-    await _send_invite_keyboard_chunks(
+    mids = await _send_invite_keyboard_chunks(
         context.bot,
         uid,
         entries,
         header="👇 Gruba katılmak için düğmelere dokun.\n"
         "Hepsine katıldıysan «Katıldım»a bas; eksik grupların linkleri tekrar gösterilir.",
     )
+    append_bot_keyboard_messages(uid, mids)
 
 
 async def invite_joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -415,12 +469,64 @@ async def invite_joined_callback(update: Update, context: ContextTypes.DEFAULT_T
         chat_id=uid,
         text=f"Hâlâ {len(missing)} gruba katılmadığın görünüyor. Aşağıdan tekrar dene:",
     )
-    await _send_invite_keyboard_chunks(
+    remids = await _send_invite_keyboard_chunks(
         context.bot,
         uid,
         missing,
         header="🔁 Henüz katılmadığın gruplar:",
     )
+    append_bot_keyboard_messages(uid, remids)
+
+
+async def revoke_invite_package(bot, tele: TelethonService, target_id: int) -> dict[str, Any]:
+    """Panelden davet iptali: kaydı sil, bot klavye mesajlarını sil, Telethon DM ve diyalog temizliği."""
+    from invite_store import pop_record
+
+    tid = int(target_id)
+    record = pop_record(tid)
+    INVITE_PENDING.pop(tid, None)
+    INVITE_TRACKING.pop(tid, None)
+
+    warnings: list[str] = []
+    if not record:
+        return {
+            "ok": True,
+            "removed": False,
+            "target_id": tid,
+            "note": "Dosyada kayıt yoktu; bekleyen davet bellek temizlendi.",
+            "warnings": warnings,
+        }
+
+    for mid in record.get("bot_keyboard_message_ids") or []:
+        try:
+            await bot.delete_message(chat_id=tid, message_id=int(mid))
+        except TelegramError as e:
+            warnings.append(f"Bot mesajı {mid}: {e}")
+        except Exception as e:
+            warnings.append(f"Bot mesajı {mid}: {e}")
+
+    dm_id = record.get("telethon_dm_message_id")
+    if dm_id is not None:
+        try:
+            await tele.ensure_connected()
+            await tele.client.delete_messages(tid, int(dm_id))
+        except Exception as e:
+            warnings.append(f"Telethon talimat DM: {e}")
+
+    try:
+        await tele.ensure_connected()
+        ent = await tele.client.get_entity(tid)
+        await tele.client.delete_dialog(ent)
+    except Exception as e:
+        warnings.append(f"Telethon diyalog: {e}")
+
+    return {
+        "ok": True,
+        "removed": True,
+        "username": record.get("username"),
+        "target_id": tid,
+        "warnings": warnings,
+    }
 
 
 def build_invite_conversation() -> ConversationHandler:

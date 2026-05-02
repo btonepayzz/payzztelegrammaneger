@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==21.7
 telethon==1.38.1
 python-dotenv==1.0.1
 aiohttp==3.11.11
+requests==2.32.3

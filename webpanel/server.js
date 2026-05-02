@@ -302,6 +302,62 @@ app.post("/api/admin/telethon/password", requireAuth, requireAdmin, async (req, 
   }
 });
 
+app.get("/api/mailforwarder/status", requireAuth, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/mailforwarder/status");
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/mailforwarder/toggle", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/mailforwarder/toggle", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/mailforwarder/check-once", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/mailforwarder/check-once", { method: "POST" });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.get("/api/mailforwarder/settings", requireAuth, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/mailforwarder/settings");
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/mailforwarder/settings", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/mailforwarder/settings", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.post("/api/logout", (req, res) => {
   req.session.destroy((err) => {
     if (err) console.warn("[panel] session destroy:", err.message);
@@ -347,6 +403,29 @@ app.post("/api/invite", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/invite/recipients", requireAuth, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/invite/recipients");
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/invite/revoke", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/invite/revoke", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.post("/api/kick/preview", requireAuth, async (req, res) => {
   try {
     const r = await pyFetch("/api/kick/preview", {
@@ -375,6 +454,10 @@ app.post("/api/kick", requireAuth, async (req, res) => {
 
 app.get("/dashboard", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "dashboard.html"));
+});
+
+app.get("/mailforwarder", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "mailforwarder.html"));
 });
 
 app.get("/admin", requireAuth, requireAdmin, (req, res) => {

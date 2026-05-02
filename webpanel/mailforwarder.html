@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mail forwarder — PAYZZ TELEGRAM YÖNETİM</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-left">
+      <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
+      <span id="whoami" class="muted whoami"></span>
+    </div>
+    <div class="top-right">
+      <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
+      <a class="top-link" href="/dashboard">Panel</a>
+      <a id="linkAdmin" class="top-link hidden" href="/admin">Yönetim</a>
+      <button type="button" id="logout">Çıkış</button>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="card">
+      <h1 class="admin-page-title">Mail forwarder</h1>
+      <p class="muted">
+        Gelen kutusu IMAP ile okunur; uyarılar <strong>bu sayfada kaydettiğin ayrı Telegram bot token</strong> ile gönderilir (ana bot token’ından bağımsız).
+        Ayarlar sunucuda <code class="small">mail_forwarder_config.json</code> dosyasına yazılır (repoya gitmez).
+      </p>
+
+      <div id="mfStatus" class="panel-result" aria-live="polite"></div>
+
+      <div id="mfFormWrap" class="hidden">
+        <h2 class="subsection-title">Bağlantı ayarları</h2>
+        <label class="admin-check"><input type="checkbox" id="mfEnabled" /> Mail iletimi etkin</label>
+
+        <div class="admin-form-grid">
+          <div>
+            <label for="mfImapHost">IMAP sunucu</label>
+            <input id="mfImapHost" type="text" autocomplete="off" placeholder="mail.ornek.com" />
+          </div>
+          <div>
+            <label for="mfImapUser">E-posta kullanıcısı</label>
+            <input id="mfImapUser" type="text" autocomplete="username" />
+          </div>
+        </div>
+        <div class="admin-form-grid">
+          <div>
+            <label for="mfImapPass">IMAP şifresi</label>
+            <input id="mfImapPass" type="password" autocomplete="new-password" placeholder="Değiştirmiyorsan boş bırak" />
+          </div>
+          <div>
+            <label for="mfPoll">Yoklama aralığı (sn)</label>
+            <input id="mfPoll" type="number" min="10" step="1" value="10" />
+          </div>
+        </div>
+
+        <h2 class="subsection-title">Telegram (mail botu)</h2>
+        <div class="admin-form-grid">
+          <div>
+            <label for="mfTgToken">Bu özellik için bot token (@BotFather)</label>
+            <input id="mfTgToken" type="password" autocomplete="off" placeholder="123456:ABC… (ana bottan farklı olabilir)" />
+          </div>
+          <div>
+            <label for="mfChatId">Hedef sohbet / kullanıcı ID</label>
+            <input id="mfChatId" type="text" inputmode="numeric" placeholder="-100… veya kullanıcı ID" />
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" id="btnMfSave">Kaydet</button>
+        </div>
+        <p id="mfSaveMsg" class="admin-msg" aria-live="polite"></p>
+      </div>
+
+      <div id="mfOps" class="hidden">
+        <h2 class="subsection-title">İşlemler</h2>
+        <div class="btn-row tight">
+          <button type="button" id="btnMfPause" class="btn-secondary">Geçici durdur</button>
+          <button type="button" id="btnMfResume">Devam ettir</button>
+          <button type="button" id="btnMfOnce" class="btn-secondary">Şimdi kontrol et</button>
+        </div>
+        <p id="mfMsg" class="admin-msg" aria-live="polite"></p>
+      </div>
+
+      <p id="mfHintNonAdmin" class="muted small hidden">Ayarları değiştirmek için yönetici hesabıyla giriş yapın.</p>
+    </section>
+  </main>
+  <script>
+    window.addEventListener("pageshow", (ev) => {
+      if (ev.persisted) location.reload();
+    });
+
+    const escapeHtml = (s) => {
+      const d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    };
+
+    async function safeJson(res, section) {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { ok: false, error: section + " yanıtı JSON değil: " + text.slice(0, 200) };
+      }
+    }
+
+    async function loadSettingsForm() {
+      const r = await fetch("/api/mailforwarder/settings");
+      const j = await safeJson(r, "Ayarlar");
+      if (!r.ok || !j.ok) return null;
+      document.getElementById("mfEnabled").checked = !!j.enabled;
+      document.getElementById("mfImapHost").value = j.imap_host || "";
+      document.getElementById("mfImapUser").value = j.imap_user || "";
+      document.getElementById("mfImapPass").value = "";
+      document.getElementById("mfPoll").value = j.poll_interval_sec || 10;
+      document.getElementById("mfTgToken").value = "";
+      document.getElementById("mfChatId").value = j.forward_chat_id !== "" && j.forward_chat_id != null ? String(j.forward_chat_id) : "";
+      const passHint = document.getElementById("mfImapPass");
+      if (passHint && j.imap_password_set) passHint.placeholder = "Kayıtlı şifre var; değiştirmek için yazın";
+      const tokHint = document.getElementById("mfTgToken");
+      if (tokHint && j.telegram_bot_token_set) tokHint.placeholder = "Kayıtlı token var; değiştirmek için yapıştırın";
+      return j;
+    }
+
+    async function loadStatus() {
+      const el = document.getElementById("mfStatus");
+      el.innerHTML = `<div class="loading">Durum yükleniyor…</div>`;
+      const r = await fetch("/api/mailforwarder/status");
+      const j = await safeJson(r, "Mail forwarder");
+      if (!r.ok || !j.ok) {
+        el.innerHTML = `<div class="banner banner-error">${escapeHtml(j.error || "Durum alınamadı")}</div>`;
+        return;
+      }
+      const lines = [];
+      lines.push(`<p><strong>Yapılandırma tamam:</strong> ${j.configured ? "evet" : "hayır"}</p>`);
+      lines.push(`<p class="muted small">Kaynak: ${escapeHtml(j.settings_source || "—")} ${j.imap_host ? " · IMAP: " + escapeHtml(j.imap_host) : ""}</p>`);
+      lines.push(`<p><strong>Etkin:</strong> ${j.enabled ? "evet" : "hayır"} · <strong>Döngü:</strong> ${j.paused ? "durduruldu" : "çalışıyor"}</p>`);
+      lines.push(`<p><strong>İlk senkron:</strong> ${j.initialized ? "tamam" : "bekliyor"} · <strong>Son UID:</strong> ${j.last_uid != null ? j.last_uid : "—"}</p>`);
+      if (j.last_check_at) {
+        const d = new Date(j.last_check_at * 1000);
+        lines.push(`<p class="muted small">Son kontrol: ${escapeHtml(d.toLocaleString())}</p>`);
+      }
+      if (j.last_error) {
+        lines.push(`<p class="banner banner-error"><strong>Son hata:</strong> ${escapeHtml(j.last_error)}</p>`);
+      }
+      lines.push(`<p class="muted small">Yoklama: ${j.poll_interval_sec} sn</p>`);
+      el.innerHTML = `<div class="card-inner">${lines.join("")}</div>`;
+    }
+
+    document.getElementById("logout").onclick = async () => {
+      await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+      location.replace("/");
+    };
+
+    document.getElementById("btnMfSave").onclick = async () => {
+      const msg = document.getElementById("mfSaveMsg");
+      msg.textContent = "";
+      const body = {
+        enabled: document.getElementById("mfEnabled").checked,
+        imap_host: document.getElementById("mfImapHost").value.trim(),
+        imap_user: document.getElementById("mfImapUser").value.trim(),
+        imap_password: document.getElementById("mfImapPass").value,
+        telegram_bot_token: document.getElementById("mfTgToken").value.trim(),
+        forward_chat_id: document.getElementById("mfChatId").value.trim(),
+        poll_interval_sec: parseInt(document.getElementById("mfPoll").value, 10) || 10,
+      };
+      const r = await fetch("/api/mailforwarder/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await safeJson(r, "Kayıt");
+      if (!r.ok || !j.ok) {
+        msg.textContent = j.error || "Kaydedilemedi";
+        return;
+      }
+      msg.textContent = "Kaydedildi.";
+      document.getElementById("mfImapPass").value = "";
+      document.getElementById("mfTgToken").value = "";
+      await loadSettingsForm();
+      await loadStatus();
+    };
+
+    document.getElementById("btnMfPause").onclick = async () => {
+      const msg = document.getElementById("mfMsg");
+      msg.textContent = "";
+      const r = await fetch("/api/mailforwarder/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: true }),
+      });
+      const j = await safeJson(r, "Mail forwarder");
+      if (!r.ok) {
+        msg.textContent = j.error || "İşlem başarısız";
+        return;
+      }
+      await loadStatus();
+    };
+
+    document.getElementById("btnMfResume").onclick = async () => {
+      const msg = document.getElementById("mfMsg");
+      msg.textContent = "";
+      const r = await fetch("/api/mailforwarder/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: false }),
+      });
+      const j = await safeJson(r, "Mail forwarder");
+      if (!r.ok) {
+        msg.textContent = j.error || "İşlem başarısız";
+        return;
+      }
+      await loadStatus();
+    };
+
+    document.getElementById("btnMfOnce").onclick = async () => {
+      const msg = document.getElementById("mfMsg");
+      msg.textContent = "Kontrol ediliyor…";
+      const r = await fetch("/api/mailforwarder/check-once", { method: "POST" });
+      const j = await safeJson(r, "Mail forwarder");
+      if (!r.ok) {
+        msg.textContent = j.error || "Başarısız";
+        return;
+      }
+      msg.textContent = "Tamam.";
+      await loadStatus();
+    };
+
+    (async () => {
+      const r = await fetch("/api/me");
+      const me = await safeJson(r, "Oturum");
+      if (me && me.username) {
+        const w = document.getElementById("whoami");
+        if (w) w.textContent = "@" + me.username;
+      }
+      if (me && me.is_admin) {
+        const link = document.getElementById("linkAdmin");
+        if (link) link.classList.remove("hidden");
+        document.getElementById("mfFormWrap").classList.remove("hidden");
+        document.getElementById("mfOps").classList.remove("hidden");
+        await loadSettingsForm();
+      } else {
+        document.getElementById("mfHintNonAdmin").classList.remove("hidden");
+      }
+      await loadStatus();
+    })();
+  </script>
+  <script src="/theme-toggle.js"></script>
+</body>
+</html>

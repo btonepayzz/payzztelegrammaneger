@@ -3,13 +3,15 @@ Yerel iç HTTP API (aiohttp). Web panel (Node) Bearer token ile buraya bağlanı
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from aiohttp import web
 
 from bulk_kick_flow import api_bulk_kick_all_groups, api_bulk_kick_preview
-from invite_flow import create_invite_package
+from invite_flow import create_invite_package, revoke_invite_package
+from invite_store import list_recipients
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +88,33 @@ async def handle_invite(request: web.Request) -> web.Response:
         return deny
     registry = request.app["registry"]
     result = await create_invite_package(bot, tele, registry, username, operator_chat_id=0)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+async def handle_invite_recipients(_request: web.Request) -> web.Response:
+    return web.json_response({"ok": True, "recipients": list_recipients()})
+
+
+async def handle_invite_revoke(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    raw_id = data.get("target_id")
+    try:
+        target_id = int(raw_id)
+    except (TypeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "target_id sayısal olmalı"},
+            status=400,
+        )
+    bot = request.app["bot"]
+    tele = request.app["tele"]
+    deny = await _telethon_required(tele)
+    if deny is not None:
+        return deny
+    result = await revoke_invite_package(bot, tele, target_id)
     status = 200 if result.get("ok") else 400
     return web.json_response(result, status=status)
 
@@ -201,27 +230,87 @@ async def handle_telethon_password(request: web.Request) -> web.Response:
     return web.json_response(result, status=status)
 
 
+async def handle_mailforwarder_status(request: web.Request) -> web.Response:
+    mf = request.app.get("mail_forwarder")
+    if mf is None:
+        return web.json_response({"ok": False, "error": "Mail forwarder yüklü değil"}, status=500)
+    return web.json_response(mf.status_public())
+
+
+async def handle_mailforwarder_toggle(request: web.Request) -> web.Response:
+    mf = request.app.get("mail_forwarder")
+    if mf is None:
+        return web.json_response({"ok": False, "error": "Mail forwarder yüklü değil"}, status=500)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    paused = bool(data.get("paused"))
+    mf.set_paused(paused)
+    return web.json_response({"ok": True, "paused": paused})
+
+
+async def handle_mailforwarder_check_once(request: web.Request) -> web.Response:
+    mf = request.app.get("mail_forwarder")
+    if mf is None:
+        return web.json_response({"ok": False, "error": "Mail forwarder yüklü değil"}, status=500)
+    if not mf.configured():
+        return web.json_response({"ok": False, "error": "Mail forwarder yapılandırması eksik"}, status=400)
+    await asyncio.to_thread(mf.check_mail_once)
+    return web.json_response(mf.status_public())
+
+
+async def handle_mailforwarder_settings_get(request: web.Request) -> web.Response:
+    mf = request.app.get("mail_forwarder")
+    if mf is None:
+        return web.json_response({"ok": False, "error": "Mail forwarder yüklü değil"}, status=500)
+    return web.json_response(mf.settings_for_panel())
+
+
+async def handle_mailforwarder_settings_save(request: web.Request) -> web.Response:
+    mf = request.app.get("mail_forwarder")
+    if mf is None:
+        return web.json_response({"ok": False, "error": "Mail forwarder yüklü değil"}, status=500)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    ok, err = mf.save_from_panel(data if isinstance(data, dict) else {})
+    if not ok:
+        return web.json_response({"ok": False, "error": err}, status=400)
+    return web.json_response({"ok": True})
+
+
 def create_internal_app(
     registry: Any,
     tele: Any,
     bot: Any,
     internal_token: str,
+    mail_forwarder: Any | None = None,
 ) -> web.Application:
     app = web.Application(middlewares=[bearer_auth])
     app["registry"] = registry
     app["tele"] = tele
     app["bot"] = bot
     app["internal_token"] = internal_token
+    app["mail_forwarder"] = mail_forwarder
     app.router.add_get("/health", handle_health)
     app.router.add_get("/api/joint", handle_joint)
     app.router.add_post("/api/refresh", handle_refresh)
     app.router.add_post("/api/invite", handle_invite)
+    app.router.add_get("/api/invite/recipients", handle_invite_recipients)
+    app.router.add_post("/api/invite/revoke", handle_invite_revoke)
     app.router.add_post("/api/kick/preview", handle_kick_preview)
     app.router.add_post("/api/kick", handle_kick)
     app.router.add_get("/api/telethon/status", handle_telethon_status)
     app.router.add_post("/api/telethon/send_code", handle_telethon_send_code)
     app.router.add_post("/api/telethon/sign_in", handle_telethon_sign_in)
     app.router.add_post("/api/telethon/password", handle_telethon_password)
+    app.router.add_get("/api/mailforwarder/status", handle_mailforwarder_status)
+    app.router.add_post("/api/mailforwarder/toggle", handle_mailforwarder_toggle)
+    app.router.add_post("/api/mailforwarder/check-once", handle_mailforwarder_check_once)
+    app.router.add_get("/api/mailforwarder/settings", handle_mailforwarder_settings_get)
+    app.router.add_post("/api/mailforwarder/settings", handle_mailforwarder_settings_save)
     return app
 
 
@@ -232,11 +321,12 @@ async def start_internal_api(
     host: str,
     port: int,
     token: str,
+    mail_forwarder: Any | None = None,
 ) -> web.AppRunner | None:
     if not token:
         log.warning("INTERNAL_PANEL_TOKEN boş — iç API başlatılmadı.")
         return None
-    app = create_internal_app(registry, tele, bot, token)
+    app = create_internal_app(registry, tele, bot, token, mail_forwarder=mail_forwarder)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

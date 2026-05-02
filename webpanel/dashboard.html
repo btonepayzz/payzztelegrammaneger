@@ -15,6 +15,7 @@
     </div>
     <div class="top-right">
       <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
+      <a class="top-link" href="/mailforwarder">Mail iletim</a>
       <a id="linkAdmin" class="top-link hidden" href="/admin">Yönetim</a>
       <button type="button" id="logout">Çıkış</button>
     </div>
@@ -47,6 +48,15 @@
           <button type="button" id="btnInvite">Davet oluştur</button>
         </div>
         <div id="invOut" class="panel-result" aria-live="polite"></div>
+        <h3 class="subsection-title">Davet kayıtları</h3>
+        <p class="muted small">
+          Davet paketi oluşturduğunuz kullanıcılar burada tutulur. Yöneticiler «Daveti sil» ile botun gönderdiği düğmeli mesajları ve Telethon hesabındaki özel konuşmayı kaldırmaya çalışır.
+          Karşı taraftaki Telegram uygulamasında geçmiş her zaman tam silinmeyebilir.
+        </p>
+        <div class="btn-row">
+          <button type="button" id="btnInviteRecipientsRefresh" class="btn-secondary">Kayıtları yenile</button>
+        </div>
+        <div id="inviteRecipientsOut" class="panel-result" aria-live="polite"></div>
       </div>
     </section>
     <section class="card card-collapsible">
@@ -101,6 +111,18 @@
       d.textContent = s == null ? "" : String(s);
       return d.innerHTML;
     };
+
+    let panelIsAdmin = false;
+
+    function fmtInviteTs(ts) {
+      if (ts == null || ts === "") return "—";
+      const n = typeof ts === "number" ? ts : parseFloat(ts);
+      if (!Number.isFinite(n)) return "—";
+      const ms = n < 1e12 ? n * 1000 : n;
+      const d = new Date(ms);
+      if (Number.isNaN(d.getTime())) return "—";
+      return d.toLocaleString();
+    }
 
     const emptyMsg = (text) =>
       `<div class="empty-state">${escapeHtml(text)}</div>`;
@@ -234,6 +256,72 @@
         ${sampleHtml}
         ${errSection}
         <p class="muted small">Tam liste ve butonlar hedef kullanıcı bota <code>/davet</code> yazdığında gösterilir.</p>`;
+    }
+
+    function renderInviteRecipients(data, isAdmin) {
+      const el = document.getElementById("inviteRecipientsOut");
+      if (!el) return;
+      if (!data || typeof data !== "object" || !data.ok) {
+        el.innerHTML = `<div class="banner banner-error">${escapeHtml(data?.error || "Liste alınamadı.")}</div>`;
+        return;
+      }
+      const rows = Array.isArray(data.recipients) ? data.recipients : [];
+      if (!rows.length) {
+        el.innerHTML = emptyMsg("Henüz kayıtlı davet yok.");
+        return;
+      }
+      let head =
+        "<thead><tr><th>Kullanıcı</th><th>Telegram ID</th><th>Oluşturulma</th><th>Buton mesajı</th>";
+      if (isAdmin) head += "<th></th>";
+      head += "</tr></thead>";
+      let body = "";
+      for (const r of rows) {
+        const tid = r.target_id;
+        const bc = r.bot_message_count != null ? String(r.bot_message_count) : "—";
+        body += `<tr>
+          <td>@${escapeHtml(r.username || "—")}</td>
+          <td class="mono">${escapeHtml(String(tid))}</td>
+          <td>${escapeHtml(fmtInviteTs(r.created_at))}</td>
+          <td>${escapeHtml(bc)}</td>`;
+        if (isAdmin) {
+          body += `<td><button type="button" class="btn-tiny btn-secondary btn-invite-revoke" data-target="${escapeHtml(
+            String(tid)
+          )}">Daveti sil</button></td>`;
+        }
+        body += "</tr>";
+      }
+      el.innerHTML = `<div class="table-wrap"><table class="data-table">${head}<tbody>${body}</tbody></table></div>`;
+      if (isAdmin) {
+        el.querySelectorAll(".btn-invite-revoke").forEach((b) => {
+          b.onclick = async () => {
+            const id = b.getAttribute("data-target");
+            if (!confirm("Bu kullanıcı için davet kaydı silinsin; bot ve Telethon tarafı temizlensin mi?")) return;
+            const rr = await fetch("/api/invite/revoke", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target_id: parseInt(id, 10) }),
+            });
+            const jj = await safeJson(rr, "İptal");
+            if (!jj.ok) {
+              alert(jj.error || "İptal başarısız");
+              return;
+            }
+            let msg = jj.removed === false ? "Kayıt yoktu; bellek temizlendi." : "Davet iptal edildi.";
+            if (jj.warnings && jj.warnings.length) msg += "\n\nUyarılar:\n" + jj.warnings.join("\n");
+            alert(msg);
+            await loadInviteRecipients();
+          };
+        });
+      }
+    }
+
+    async function loadInviteRecipients() {
+      const el = document.getElementById("inviteRecipientsOut");
+      if (!el) return;
+      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      const r = await fetch("/api/invite/recipients");
+      const j = await safeJson(r, "Davet kayıtları");
+      renderInviteRecipients(j, panelIsAdmin);
     }
 
     let kickPreviewData = null;
@@ -386,7 +474,10 @@
       });
       const j = await safeJson(r, "Davet");
       renderInvite(j);
+      if (j && j.ok) loadInviteRecipients();
     };
+
+    document.getElementById("btnInviteRecipientsRefresh").onclick = () => loadInviteRecipients();
 
     document.getElementById("btnKickPreview").onclick = async () => {
       const u = document.getElementById("kickUser").value.trim();
@@ -475,9 +566,11 @@
         if (w) w.textContent = "@" + me.username;
       }
       if (me && me.is_admin) {
+        panelIsAdmin = true;
         const link = document.getElementById("linkAdmin");
         if (link) link.classList.remove("hidden");
       }
+      loadInviteRecipients();
     })();
   </script>
   <script src="/theme-toggle.js"></script>

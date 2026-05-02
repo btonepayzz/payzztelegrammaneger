@@ -16,6 +16,7 @@ from telegram import Update
 from config import load_settings
 from group_registry import GroupRegistry
 from internal_api import start_internal_api
+from mail_forwarder import MailForwarderManager
 from telegram_bot import build_application
 from telethon_service import TelethonService
 
@@ -80,6 +81,7 @@ def _should_start_panel(settings) -> bool:
 
 async def main() -> None:
     settings = load_settings()
+    mail_forwarder = MailForwarderManager(settings, ROOT)
     registry = GroupRegistry()
     tele = TelethonService(
         settings.api_id,
@@ -106,6 +108,7 @@ async def main() -> None:
             settings.internal_api_host,
             settings.internal_api_port,
             settings.internal_panel_token,
+            mail_forwarder=mail_forwarder,
         )
     else:
         log.warning(
@@ -167,12 +170,23 @@ async def main() -> None:
         name="telethon-bot-sync",
     )
 
+    mail_forwarder_task = asyncio.create_task(
+        mail_forwarder.run_loop(),
+        name="mail-forwarder",
+    )
+    log.info("Mail forwarder döngüsü başladı (yapılandırma panelden veya ortamdan)")
+
     log.info("Bot çalışıyor; Ctrl+C ile çık.")
     try:
         await asyncio.Event().wait()
     except asyncio.CancelledError:
         pass
     finally:
+        mail_forwarder_task.cancel()
+        try:
+            await mail_forwarder_task
+        except asyncio.CancelledError:
+            pass
         refresh_task.cancel()
         try:
             await refresh_task

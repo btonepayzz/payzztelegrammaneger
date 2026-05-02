@@ -39,6 +39,22 @@ class Settings:
     web_panel_password_hash: str | None
     web_panel_totp_secret: str | None
     web_panel_session_secret: str
+    mail_forwarder_enabled: bool
+    mail_imap_host: str
+    mail_imap_user: str
+    mail_imap_password: str
+    mail_forward_chat_id: int | None
+    mail_poll_interval_sec: int
+
+
+def _parse_int_optional(raw: str) -> int | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
 
 
 def load_settings() -> Settings:
@@ -97,6 +113,14 @@ def load_settings() -> Settings:
     if not api_id_raw or not api_hash:
         raise ValueError("TELEGRAM_API_ID / TELEGRAM_API_HASH eksik")
 
+    mf_raw = os.environ.get("MAIL_FORWARDER_ENABLED", "0").strip().lower()
+    mail_forwarder_enabled = mf_raw in ("1", "true", "yes", "on")
+    mail_imap_host = os.environ.get("MAIL_IMAP_HOST", "").strip()
+    mail_imap_user = os.environ.get("MAIL_IMAP_USER", "").strip()
+    mail_imap_password = os.environ.get("MAIL_IMAP_PASSWORD", "").strip()
+    mail_forward_chat_id = _parse_int_optional(os.environ.get("MAIL_FORWARD_CHAT_ID", ""))
+    mail_poll_interval_sec = max(10, int(os.environ.get("MAIL_POLL_INTERVAL_SEC", "10")))
+
     return Settings(
         bot_token=token,
         api_id=int(api_id_raw),
@@ -115,4 +139,10 @@ def load_settings() -> Settings:
         web_panel_password_hash=wp_pass_hash,
         web_panel_totp_secret=wp_totp,
         web_panel_session_secret=sess_secret or "change-me-session-secret",
+        mail_forwarder_enabled=mail_forwarder_enabled,
+        mail_imap_host=mail_imap_host,
+        mail_imap_user=mail_imap_user,
+        mail_imap_password=mail_imap_password,
+        mail_forward_chat_id=mail_forward_chat_id,
+        mail_poll_interval_sec=mail_poll_interval_sec,
     )
