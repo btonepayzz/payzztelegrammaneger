@@ -84,6 +84,7 @@ async def main() -> None:
         settings.api_hash,
         settings.telethon_session,
         registry,
+        string_session=settings.telethon_string_session,
     )
     await tele.connect_and_login()
     await tele.refresh_dialogs_into_registry()

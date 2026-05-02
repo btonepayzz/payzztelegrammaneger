@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 from typing import Any
 
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.tl.types import Channel, Chat, User
 
 from group_registry import GroupRegistry
@@ -25,6 +28,15 @@ def _title_from_entity(entity: Any) -> str:
     return ""
 
 
+def _cannot_interactive_telethon_login() -> bool:
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("CI"):
+        return True
+    try:
+        return not sys.stdin.isatty()
+    except Exception:
+        return True
+
+
 class TelethonService:
     def __init__(
         self,
@@ -32,8 +44,11 @@ class TelethonService:
         api_hash: str,
         session_name: str,
         registry: GroupRegistry,
+        *,
+        string_session: str | None = None,
     ) -> None:
-        self._client = TelegramClient(session_name, api_id, api_hash)
+        sess: str | StringSession = StringSession(string_session) if string_session else session_name
+        self._client = TelegramClient(sess, api_id, api_hash)
         self._registry = registry
         self._refresh_lock = asyncio.Lock()
 
@@ -43,8 +58,18 @@ class TelethonService:
 
     async def connect_and_login(self) -> None:
         await self._client.connect()
-        if not await self._client.is_user_authorized():
-            await self._client.start()
+        if await self._client.is_user_authorized():
+            log.info("Telethon oturumu hazır")
+            return
+        if _cannot_interactive_telethon_login():
+            raise SystemExit(
+                "Telethon kullanıcı oturumu yok veya geçersiz; sunucuda telefon doğrulaması yapılamaz.\n"
+                "Yerelde bir kez giriş yapıp oturumu dışa aktarın:\n"
+                "  python export_telethon_string_session.py\n"
+                "Çıkan TELETHON_STRING_SESSION değerini Railway Variables'a ekleyin.\n"
+                "Alternatif: user_session.session dosyasını konteynere volume olarak bağlayın."
+            )
+        await self._client.start()
         log.info("Telethon oturumu hazır")
 
     async def refresh_dialogs_into_registry(self) -> None:

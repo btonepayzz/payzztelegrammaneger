@@ -26,6 +26,7 @@ class Settings:
     api_id: int
     api_hash: str
     telethon_session: str
+    telethon_string_session: str | None
     sync_interval_sec: int
     admin_user_id: int | None
     internal_api_host: str
@@ -54,6 +55,8 @@ def load_settings() -> Settings:
     api_id_raw = sanitize_api_id(os.environ.get("TELEGRAM_API_ID", ""))
     api_hash = sanitize_api_hash(os.environ.get("TELEGRAM_API_HASH", ""))
     session = sanitize_session_name(os.environ.get("TELETHON_SESSION_NAME", "") or "user_session")
+    str_sess_raw = os.environ.get("TELETHON_STRING_SESSION", "").strip()
+    telethon_string_session: str | None = str_sess_raw or None
     sync = int(os.environ.get("SYNC_INTERVAL_SEC", "45"))
     admin_raw = os.environ.get("ADMIN_USER_ID", "").strip()
     admin_user_id: int | None = int(admin_raw) if admin_raw.isdigit() else None
@@ -102,6 +105,7 @@ def load_settings() -> Settings:
         api_id=int(api_id_raw),
         api_hash=api_hash,
         telethon_session=session,
+        telethon_string_session=telethon_string_session,
         sync_interval_sec=max(15, sync),
         admin_user_id=admin_user_id,
         internal_api_host=internal_host,
