@@ -4,10 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mail forwarder — PAYZZ TELEGRAM YÖNETİM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body class="page-mail">
   <header class="top">
     <div class="top-left">
       <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
@@ -15,17 +21,21 @@
     </div>
     <div class="top-right">
       <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
-      <a class="top-link" href="/dashboard">Panel</a>
-      <a id="linkAdmin" class="top-link hidden" href="/admin">Yönetim</a>
+      <a class="top-nav-btn" href="/dashboard">Panel</a>
+      <a id="linkAdmin" class="top-nav-btn hidden" href="/admin">Yönetim</a>
       <button type="button" id="logout">Çıkış</button>
     </div>
   </header>
   <main class="wrap">
+    <header class="page-hero page-hero--compact">
+      <h1 class="page-title">Mail iletim</h1>
+      <p class="page-lead muted">IMAP gelen kutusu ve Telegram üzerinden uyarılar.</p>
+    </header>
     <section class="card">
-      <h1 class="admin-page-title">Mail forwarder</h1>
       <p class="muted">
-        Gelen kutusu IMAP ile okunur; uyarılar <strong>bu sayfada kaydettiğin ayrı Telegram bot token</strong> ile gönderilir (ana bot token’ından bağımsız).
-        Ayarlar sunucuda <code class="small">mail_forwarder_config.json</code> dosyasına yazılır (repoya gitmez).
+        Telegram <strong>mail bot tokenı</strong> ve grup botu ayarları için <a href="/admin">Yönetim → Telegram bot tokenları</a>
+        sayfasını kullanın. Bu sayfada IMAP bağlantısı ve uyarıların gönderileceği hedef sohbet ayarlanır.
+        Yapılandırma sunucuda <code class="small">mail_forwarder_config.json</code> içinde saklanır (repoya gitmez).
       </p>
 
       <div id="mfStatus" class="panel-result" aria-live="polite"></div>
@@ -55,12 +65,9 @@
           </div>
         </div>
 
-        <h2 class="subsection-title">Telegram (mail botu)</h2>
+        <h2 class="subsection-title">Telegram hedefi</h2>
+        <p class="muted small">Mail bot tokenı <a href="/admin">Yönetim</a> üzerinden kaydedilir.</p>
         <div class="admin-form-grid">
-          <div>
-            <label for="mfTgToken">Bu özellik için bot token (@BotFather)</label>
-            <input id="mfTgToken" type="password" autocomplete="off" placeholder="123456:ABC… (ana bottan farklı olabilir)" />
-          </div>
           <div>
             <label for="mfChatId">Hedef sohbet / kullanıcı ID</label>
             <input id="mfChatId" type="text" inputmode="numeric" placeholder="-100… veya kullanıcı ID" />
@@ -115,18 +122,15 @@
       document.getElementById("mfImapUser").value = j.imap_user || "";
       document.getElementById("mfImapPass").value = "";
       document.getElementById("mfPoll").value = j.poll_interval_sec || 10;
-      document.getElementById("mfTgToken").value = "";
       document.getElementById("mfChatId").value = j.forward_chat_id !== "" && j.forward_chat_id != null ? String(j.forward_chat_id) : "";
       const passHint = document.getElementById("mfImapPass");
       if (passHint && j.imap_password_set) passHint.placeholder = "Kayıtlı şifre var; değiştirmek için yazın";
-      const tokHint = document.getElementById("mfTgToken");
-      if (tokHint && j.telegram_bot_token_set) tokHint.placeholder = "Kayıtlı token var; değiştirmek için yapıştırın";
       return j;
     }
 
     async function loadStatus() {
       const el = document.getElementById("mfStatus");
-      el.innerHTML = `<div class="loading">Durum yükleniyor…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Durum yükleniyor…</div>`;
       const r = await fetch("/api/mailforwarder/status");
       const j = await safeJson(r, "Mail forwarder");
       if (!r.ok || !j.ok) {
@@ -162,7 +166,6 @@
         imap_host: document.getElementById("mfImapHost").value.trim(),
         imap_user: document.getElementById("mfImapUser").value.trim(),
         imap_password: document.getElementById("mfImapPass").value,
-        telegram_bot_token: document.getElementById("mfTgToken").value.trim(),
         forward_chat_id: document.getElementById("mfChatId").value.trim(),
         poll_interval_sec: parseInt(document.getElementById("mfPoll").value, 10) || 10,
       };
@@ -178,7 +181,6 @@
       }
       msg.textContent = "Kaydedildi.";
       document.getElementById("mfImapPass").value = "";
-      document.getElementById("mfTgToken").value = "";
       await loadSettingsForm();
       await loadStatus();
     };

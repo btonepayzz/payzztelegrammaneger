@@ -4,10 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Yönetim — PAYZZ TELEGRAM YÖNETİM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body class="page-admin">
   <header class="top">
     <div class="top-left">
       <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
@@ -15,15 +21,45 @@
     </div>
     <div class="top-right">
       <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
-      <a class="top-link" href="/mailforwarder">Mail iletim</a>
-      <a class="top-link" href="/dashboard">Panele dön</a>
+      <a class="top-nav-btn" href="/mailforwarder">Mail iletim</a>
+      <a class="top-nav-btn" href="/dashboard">Panele dön</a>
       <button type="button" id="logout">Çıkış</button>
     </div>
   </header>
   <main class="wrap">
+    <header class="page-hero page-hero--compact">
+      <h1 class="page-title">Yönetim paneli</h1>
+      <p class="page-lead muted">
+        Bot tokenları, Telegram oturumu ve panel kullanıcılarını buradan yönetin.
+      </p>
+    </header>
     <section class="card">
-      <h1 class="admin-page-title">Yönetim paneli</h1>
-      <p class="muted">Panel kullanıcılarını ekleyin veya devre dışı bırakın.</p>
+      <h2 class="subsection-title">Telegram bot tokenları</h2>
+      <p class="muted">
+        <strong>Grup yönetimi</strong> ana botu ile <strong>mail uyarıları</strong> için ayrı botlar kullanılır.
+        Tokenlar sunucuda yerel dosyada saklanır (<code class="small">panel_bot_settings.json</code>,
+        <code class="small">mail_forwarder_config.json</code>); repoya yazılmaz.
+      </p>
+      <div class="admin-form-grid">
+        <div>
+          <label for="tokGroup">Grup yönetimi bot token (@BotFather)</label>
+          <input id="tokGroup" type="password" autocomplete="off" placeholder="Değiştirmek için yapıştırın" />
+          <p id="tokGroupHint" class="muted small" style="margin-top: 6px"></p>
+        </div>
+        <div>
+          <label for="tokMail">Mail iletim bot token (ana bottan farklı önerilir)</label>
+          <input id="tokMail" type="password" autocomplete="off" placeholder="Değiştirmek için yapıştırın" />
+          <p id="tokMailHint" class="muted small" style="margin-top: 6px"></p>
+        </div>
+      </div>
+      <label class="admin-check"
+        ><input type="checkbox" id="tokRevertEnv" /> Paneldeki grup bot kaydını sil; bir sonraki başlangıçta ortam
+        <code class="small">BOT_TOKEN</code> kullanılsın</label
+      >
+      <div class="btn-row">
+        <button type="button" id="btnTokensSave">Tokenları kaydet</button>
+      </div>
+      <p id="tokensMsg" class="admin-msg" aria-live="polite"></p>
 
       <h2 class="subsection-title">Telegram (Telethon) oturumu</h2>
       <p class="muted">
@@ -201,7 +237,7 @@
 
     async function loadAdminUsers() {
       const el = document.getElementById("adminOut");
-      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Yükleniyor…</div>`;
       const r = await fetch("/api/admin/users");
       const j = await safeJson(r, "Yönetim");
       if (!r.ok) {
@@ -215,6 +251,56 @@
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
       location.replace("/");
     };
+
+    async function loadTokenHints() {
+      const gh = document.getElementById("tokGroupHint");
+      const mh = document.getElementById("tokMailHint");
+      const r = await fetch("/api/admin/tokens");
+      const j = await safeJson(r, "Tokenlar");
+      if (!r.ok || !j.ok) {
+        if (gh) gh.textContent = "Durum alınamadı.";
+        if (mh) mh.textContent = "";
+        return;
+      }
+      if (gh) {
+        if (!j.group_bot_token_configured) gh.textContent = "Grup botu yapılandırılmamış.";
+        else if (j.group_bot_token_source === "panel_file")
+          gh.textContent = "Kaynak: panel dosyası (panel_bot_settings.json).";
+        else if (j.group_bot_token_source === "env") gh.textContent = "Kaynak: ortam değişkeni BOT_TOKEN.";
+        else gh.textContent = "";
+      }
+      if (mh) {
+        mh.textContent = j.mail_telegram_bot_token_set
+          ? "Mail bot token kayıtlı."
+          : "Mail bot token henüz kayıtlı değil.";
+      }
+    }
+
+    document.getElementById("btnTokensSave").addEventListener("click", async () => {
+      const msg = document.getElementById("tokensMsg");
+      if (msg) msg.textContent = "";
+      const body = {
+        group_bot_token: document.getElementById("tokGroup").value.trim(),
+        mail_telegram_bot_token: document.getElementById("tokMail").value.trim(),
+        revert_group_bot_to_env: document.getElementById("tokRevertEnv").checked,
+      };
+      const r = await fetch("/api/admin/tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await safeJson(r, "Tokenlar");
+      if (!r.ok || !j.ok) {
+        if (msg) msg.textContent = j.error || "Kaydedilemedi.";
+        return;
+      }
+      document.getElementById("tokGroup").value = "";
+      document.getElementById("tokMail").value = "";
+      document.getElementById("tokRevertEnv").checked = false;
+      const lines = j.warnings && j.warnings.length ? j.warnings.join(" ") : "Kaydedildi.";
+      if (msg) msg.textContent = lines;
+      await loadTokenHints();
+    });
 
     async function loadTelethonStatus() {
       const line = document.getElementById("telethonStatusLine");
@@ -345,6 +431,7 @@
         const w = document.getElementById("whoami");
         if (w) w.textContent = "@" + me.username;
       }
+      await loadTokenHints();
       await loadTelethonStatus();
       await loadAdminUsers();
     })();

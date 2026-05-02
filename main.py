@@ -109,6 +109,7 @@ async def main() -> None:
             settings.internal_api_port,
             settings.internal_panel_token,
             mail_forwarder=mail_forwarder,
+            root=ROOT,
         )
     else:
         log.warning(

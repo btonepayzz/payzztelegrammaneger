@@ -66,7 +66,11 @@ def load_settings() -> Settings:
         sanitize_session_name,
     )
 
-    token = sanitize_bot_token(os.environ.get("BOT_TOKEN", ""))
+    from panel_bot_settings import read_panel_bot_token
+
+    panel_bot_tok = read_panel_bot_token(_ROOT)
+    env_bot_tok = sanitize_bot_token(os.environ.get("BOT_TOKEN", ""))
+    token = panel_bot_tok if panel_bot_tok else env_bot_tok
     api_id_raw = sanitize_api_id(os.environ.get("TELEGRAM_API_ID", ""))
     api_hash = sanitize_api_hash(os.environ.get("TELEGRAM_API_HASH", ""))
     session = sanitize_session_name(os.environ.get("TELETHON_SESSION_NAME", "") or "user_session")

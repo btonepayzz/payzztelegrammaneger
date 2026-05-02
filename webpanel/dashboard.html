@@ -4,10 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PAYZZ TELEGRAM YÖNETİM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body class="page-dashboard">
   <header class="top">
     <div class="top-left">
       <strong class="brand-mark">PAYZZ TELEGRAM YÖNETİM</strong>
@@ -15,12 +21,18 @@
     </div>
     <div class="top-right">
       <button type="button" class="theme-toggle" aria-label="Tema">🌙</button>
-      <a class="top-link" href="/mailforwarder">Mail iletim</a>
-      <a id="linkAdmin" class="top-link hidden" href="/admin">Yönetim</a>
+      <a class="top-nav-btn" href="/mailforwarder">Mail iletim</a>
+      <a id="linkAdmin" class="top-nav-btn hidden" href="/admin">Yönetim</a>
       <button type="button" id="logout">Çıkış</button>
     </div>
   </header>
   <main class="wrap">
+    <header class="page-hero">
+      <h1 class="page-title">Kontrol paneli</h1>
+      <p class="page-lead muted">
+        Ortak Telegram gruplarınızı görüntüleyin, davet paketi oluşturun ve üyelikleri tek yerden yönetin.
+      </p>
+    </header>
     <section class="card card-collapsible">
       <button type="button" class="card-collapse-toggle" id="toggle-joint" aria-expanded="true" aria-controls="panel-joint">
         <span class="card-collapse-icon" aria-hidden="true"></span>
@@ -318,7 +330,7 @@
     async function loadInviteRecipients() {
       const el = document.getElementById("inviteRecipientsOut");
       if (!el) return;
-      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Yükleniyor…</div>`;
       const r = await fetch("/api/invite/recipients");
       const j = await safeJson(r, "Davet kayıtları");
       renderInviteRecipients(j, panelIsAdmin);
@@ -449,7 +461,7 @@
 
     document.getElementById("btnJoint").onclick = async () => {
       const el = document.getElementById("jointOut");
-      el.innerHTML = `<div class="loading">Yükleniyor…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Yükleniyor…</div>`;
       const r = await fetch("/api/joint");
       const j = await safeJson(r, "Liste");
       renderJoint(j);
@@ -457,7 +469,7 @@
 
     document.getElementById("btnRefresh").onclick = async () => {
       const el = document.getElementById("jointOut");
-      el.innerHTML = `<div class="loading">Senkron çalışıyor…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Senkron çalışıyor…</div>`;
       const r = await fetch("/api/refresh", { method: "POST" });
       const j = await safeJson(r, "Senkron");
       renderJoint(j);
@@ -466,7 +478,7 @@
     document.getElementById("btnInvite").onclick = async () => {
       const u = document.getElementById("invUser").value.trim();
       const el = document.getElementById("invOut");
-      el.innerHTML = `<div class="loading">Davetler oluşturuluyor (birkaç saniye sürebilir)…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Davetler oluşturuluyor (birkaç saniye sürebilir)…</div>`;
       const r = await fetch("/api/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -483,7 +495,7 @@
       const u = document.getElementById("kickUser").value.trim();
       const panel = document.getElementById("kickPickPanel");
       const out = document.getElementById("kickOut");
-      out.innerHTML = `<div class="loading">Üyelikler taranıyor…</div>`;
+      out.innerHTML = `<div class="loading loading--shimmer">Üyelikler taranıyor…</div>`;
       kickPreviewData = null;
       panel.classList.add("hidden");
       const r = await fetch("/api/kick/preview", {
@@ -535,7 +547,7 @@
         el.innerHTML = `<div class="banner banner-warn">Önce en az bir grup işaretleyin veya «Tüm ortak gruplardan çıkar» kullanın.</div>`;
         return;
       }
-      el.innerHTML = `<div class="loading">Seçilen gruplarda çıkarma…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Seçilen gruplarda çıkarma…</div>`;
       const r = await fetch("/api/kick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -548,7 +560,7 @@
     document.getElementById("btnKickAll").onclick = async () => {
       const u = document.getElementById("kickUser").value.trim();
       const el = document.getElementById("kickOut");
-      el.innerHTML = `<div class="loading">Tüm ortak gruplarda çıkarma…</div>`;
+      el.innerHTML = `<div class="loading loading--shimmer">Tüm ortak gruplarda çıkarma…</div>`;
       const r = await fetch("/api/kick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

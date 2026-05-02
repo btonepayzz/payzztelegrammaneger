@@ -13,3 +13,4 @@ webpanel/panel_users.json
 mail_attachments/
 mail_forwarder_config.json
 invite_recipients.json
+panel_bot_settings.json

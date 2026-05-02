@@ -302,6 +302,29 @@ app.post("/api/admin/telethon/password", requireAuth, requireAdmin, async (req, 
   }
 });
 
+app.get("/api/admin/tokens", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/admin/tokens");
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/admin/tokens", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const r = await pyFetch("/api/admin/tokens", {
+      method: "POST",
+      body: req.body || {},
+    });
+    const j = await r.json();
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.get("/api/mailforwarder/status", requireAuth, async (req, res) => {
   try {
     const r = await pyFetch("/api/mailforwarder/status");

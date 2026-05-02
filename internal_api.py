@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -281,12 +282,74 @@ async def handle_mailforwarder_settings_save(request: web.Request) -> web.Respon
     return web.json_response({"ok": True})
 
 
+async def handle_admin_tokens_get(request: web.Request) -> web.Response:
+    root: Path = request.app["root"]
+    from panel_bot_settings import panel_bot_status
+
+    base = panel_bot_status(root)
+    mail_extra: dict[str, Any] = {
+        "mail_telegram_bot_token_set": False,
+        "mail_forward_chat_id": "",
+    }
+    mf = request.app.get("mail_forwarder")
+    if mf is not None:
+        ms = mf.settings_for_panel()
+        if isinstance(ms, dict):
+            mail_extra["mail_telegram_bot_token_set"] = bool(ms.get("telegram_bot_token_set"))
+            fc = ms.get("forward_chat_id")
+            mail_extra["mail_forward_chat_id"] = fc if fc is not None else ""
+
+    return web.json_response({"ok": True, **base, **mail_extra})
+
+
+async def handle_admin_tokens_save(request: web.Request) -> web.Response:
+    root: Path = request.app["root"]
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Geçersiz JSON"}, status=400)
+    if not isinstance(data, dict):
+        data = {}
+
+    from panel_bot_settings import revert_panel_bot_token, write_panel_bot_token
+
+    warnings: list[str] = []
+
+    if data.get("revert_group_bot_to_env"):
+        ok, err = revert_panel_bot_token(root)
+        if not ok:
+            return web.json_response({"ok": False, "error": err}, status=400)
+        warnings.append(
+            "Grup botu için panel dosyası kaldırıldı; süreç yeniden başlatılınca BOT_TOKEN ortam değişkeni kullanılır."
+        )
+
+    gt = data.get("group_bot_token")
+    if gt is not None and str(gt).strip():
+        ok, err = write_panel_bot_token(root, str(gt))
+        if not ok:
+            return web.json_response({"ok": False, "error": err}, status=400)
+        warnings.append(
+            "Grup yönetimi bot tokenı kaydedildi. Ana botun yeni token ile çalışması için süreci yeniden başlatın."
+        )
+
+    mt = data.get("mail_telegram_bot_token")
+    mf = request.app.get("mail_forwarder")
+    if mf is not None and mt is not None and str(mt).strip():
+        ok, err = mf.save_from_panel({"telegram_bot_token": str(mt).strip()})
+        if not ok:
+            return web.json_response({"ok": False, "error": err}, status=400)
+        warnings.append("Mail iletim bot tokenı kaydedildi.")
+
+    return web.json_response({"ok": True, "warnings": warnings})
+
+
 def create_internal_app(
     registry: Any,
     tele: Any,
     bot: Any,
     internal_token: str,
     mail_forwarder: Any | None = None,
+    root: Path | None = None,
 ) -> web.Application:
     app = web.Application(middlewares=[bearer_auth])
     app["registry"] = registry
@@ -294,6 +357,7 @@ def create_internal_app(
     app["bot"] = bot
     app["internal_token"] = internal_token
     app["mail_forwarder"] = mail_forwarder
+    app["root"] = root if root is not None else Path(".")
     app.router.add_get("/health", handle_health)
     app.router.add_get("/api/joint", handle_joint)
     app.router.add_post("/api/refresh", handle_refresh)
@@ -311,6 +375,8 @@ def create_internal_app(
     app.router.add_post("/api/mailforwarder/check-once", handle_mailforwarder_check_once)
     app.router.add_get("/api/mailforwarder/settings", handle_mailforwarder_settings_get)
     app.router.add_post("/api/mailforwarder/settings", handle_mailforwarder_settings_save)
+    app.router.add_get("/api/admin/tokens", handle_admin_tokens_get)
+    app.router.add_post("/api/admin/tokens", handle_admin_tokens_save)
     return app
 
 
@@ -322,11 +388,14 @@ async def start_internal_api(
     port: int,
     token: str,
     mail_forwarder: Any | None = None,
+    root: Path | None = None,
 ) -> web.AppRunner | None:
     if not token:
         log.warning("INTERNAL_PANEL_TOKEN boş — iç API başlatılmadı.")
         return None
-    app = create_internal_app(registry, tele, bot, token, mail_forwarder=mail_forwarder)
+    app = create_internal_app(
+        registry, tele, bot, token, mail_forwarder=mail_forwarder, root=root
+    )
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
